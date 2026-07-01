@@ -13,11 +13,24 @@ Conceitos novos que aparecem aqui e valem estudar:
     separada (de fundo) e devolve o resultado pra tela quando termina.
 """
 
+import logging
 import threading
+from pathlib import Path
+
 import customtkinter as ctk
 
 from personalidade import PERSONALIDADE
-from cerebro import pensar, MODELO
+from cerebro import pensar, CerebroError, MODELO
+
+# ---- Diário de bordo (yato.log, criado ao lado deste arquivo) ----
+# Por que existe: aberto pelo atalho (pythonw), o app NÃO tem terminal —
+# qualquer erro sumiria sem deixar rastro. Aqui, tudo fica registrado.
+logging.basicConfig(
+    filename=Path(__file__).with_name("yato.log"),
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)s  %(message)s",
+    encoding="utf-8",
+)
 
 # Aparência geral: tema escuro e cor de destaque.
 ctk.set_appearance_mode("dark")
@@ -114,9 +127,16 @@ class App(ctk.CTk):
         """Roda NA THREAD DE FUNDO. Daqui NÃO se mexe na tela direto."""
         try:
             resposta = pensar(self.mensagens)
-        except Exception as erro:
-            resposta = "Meu cérebro tá desligado 💀 (o Ollama está aberto?)"
-            print("Erro ao falar com o Ollama:", erro)
+        except CerebroError as erro:
+            # Falha CONHECIDA (Ollama fechado, modelo faltando, timeout...):
+            # o cérebro já mandou a mensagem pronta e amigável — só mostrar.
+            logging.warning("Falha conhecida: %s", erro)
+            resposta = str(erro)
+        except Exception:
+            # Falha DESCONHECIDA: grava o rastro completo no yato.log
+            # (logging.exception anexa o traceback inteiro sozinho).
+            logging.exception("Erro inesperado ao falar com o cérebro")
+            resposta = "Buguei feio aqui 😵 (anotei os detalhes no yato.log)"
 
         # Volta pra thread principal pra mexer na tela com segurança.
         self.after(0, self._mostrar_resposta, resposta)
@@ -131,4 +151,6 @@ class App(ctk.CTk):
 
 
 if __name__ == "__main__":
+    logging.info("Yato abriu (modelo: %s)", MODELO)
     App().mainloop()
+    logging.info("Yato fechou")

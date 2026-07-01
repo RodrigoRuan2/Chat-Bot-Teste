@@ -4,3 +4,6 @@
 # Arquivos temporários que o Python gera
 __pycache__/
 *.pyc
+
+# Diário de bordo local (só interessa nesta máquina)
+yato.log

@@ -82,8 +82,30 @@ numa GPU de 8 GB (baixe antes com `ollama pull <nome>`):
 | `qwen2.5:7b`   | ~4,7 GB | Mais "esperto", um pouco mais lento     |
 | `llama3.1:8b`  | ~4,9 GB | Clássico, bom equilíbrio                 |
 
+## Ajustes finos (constantes no topo de `cerebro.py`)
+
+| Constante             | Padrão | O que controla                                          |
+| --------------------- | ------ | ------------------------------------------------------- |
+| `MODELO`              | gemma3:4b | Qual cérebro usar                                     |
+| `MAX_TOKENS_RESPOSTA` | 300    | Teto duro de tamanho de cada resposta                    |
+| `LIMITE_HISTORICO`    | 20     | Quantas falas recentes o modelo enxerga (personalidade sempre entra) |
+
+O limite de histórico existe porque o modelo só "vê" 4096 tokens por vez:
+sem o corte controlado, conversas longas perderiam o começo **em silêncio** —
+inclusive a personalidade.
+
+## Se algo der errado
+
+- A Yato responde com mensagens diferentes pra cada problema: Ollama fechado,
+  modelo não baixado ou demora demais — a própria bolha diz o que fazer.
+- Erros ficam registrados no **`yato.log`** (na pasta do projeto), mesmo
+  quando o app é aberto pelo atalho, sem terminal. Deu algo estranho? Olha lá.
+
 ## Próximas ideias (rumo: entender como a IA funciona)
 
+- [x] Limitar o histórico enviado (a personalidade nunca "cai da mesa")
+- [x] Erros com mensagens específicas + diário de bordo (`yato.log`)
+- [x] Teto duro de tamanho de resposta (`num_predict`)
 - [ ] Resposta em *streaming* (texto aparecendo aos poucos, palavra por palavra)
 - [ ] Deslizador de **temperatura** pra ver, ao vivo, a IA ficar mais/menos criativa
 - [ ] Mostrar os **tokens** (como a IA "fatia" o texto em pedaços)
