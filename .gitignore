@@ -1,0 +1,7 @@
+# Instruções locais do Claude Code — nunca vão pro repositório
+CLAUDE.md
+.claude/settings.local.json
+
+# Lixo de sistema operacional
+Thumbs.db
+.DS_Store

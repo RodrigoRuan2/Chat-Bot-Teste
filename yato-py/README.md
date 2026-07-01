@@ -1,0 +1,91 @@
+# Yato (Python) — IA local de personalidade fixa
+
+Um chat de **desktop** (janela de verdade, não navegador) onde você conversa
+com a "Yato", uma IA de personalidade fixa rodando **100% no seu PC**.
+
+> Projeto de **estudo**: a ideia é usar este chat como laboratório pra
+> entender, na prática, como modelos de IA funcionam por dentro — sem stream,
+> sem avatar, só você e a máquina aprendendo juntos.
+
+## Arquitetura (quem fala com quem)
+
+```
+app.py  (a janela)
+   │  chama
+   ▼
+cerebro.py  ──HTTP──►  Ollama em http://localhost:11434  ──►  modelo na sua GPU
+   │
+personalidade.py  (o texto que diz QUEM a Yato é)
+```
+
+Três arquivos, três responsabilidades separadas — assim cada parte é fácil de
+entender e mudar sozinha:
+
+| Arquivo             | Responsabilidade                                            |
+| ------------------- | ----------------------------------------------------------- |
+| `personalidade.py`  | O *system prompt*: quem a Yato é. **Edite à vontade.**     |
+| `cerebro.py`        | Falar com o Ollama. Nenhuma tela aqui — só a lógica da IA.   |
+| `app.py`            | A janela (CustomTkinter). Só tela; pede pro `cerebro` pensar.|
+
+Essa divisão é de propósito: dá pra testar o `cerebro.py` sozinho (sem abrir a
+janela) e, no futuro, trocar o Ollama por outra coisa mexendo só num lugar.
+
+## O que você precisa (uma vez só)
+
+1. **Python 3.12+** (já tem) e o **Ollama** instalado e aberto.
+2. O modelo baixado:
+   ```bash
+   ollama pull gemma3:4b
+   ```
+
+## Como rodar
+
+O projeto usa um **ambiente virtual** (`.venv`): uma "caixa" isolada com as
+bibliotecas do projeto, pra não misturar com o Python do sistema. As libs já
+foram instaladas nele. Pra rodar:
+
+```powershell
+# 1) ativa o ambiente virtual (uma vez por terminal aberto)
+.venv\Scripts\Activate.ps1
+
+# 2) roda a janela
+python app.py
+```
+
+Se algum dia precisar reinstalar as bibliotecas:
+```powershell
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+### Testar só o cérebro (sem janela)
+
+Pra confirmar que o Ollama está respondendo, sem abrir a interface:
+```powershell
+.venv\Scripts\Activate.ps1
+python cerebro.py
+```
+Ele manda uma pergunta de teste e imprime a resposta da Yato no terminal.
+
+> A **primeira** resposta depois de ligar o PC demora 1-3 min (o modelo está
+> sendo carregado na placa de vídeo). Depois disso fica rápido, porque ele
+> permanece na memória.
+
+## Trocando o modelo
+
+O modelo é a constante `MODELO`, no topo de `cerebro.py`. Opções que cabem
+numa GPU de 8 GB (baixe antes com `ollama pull <nome>`):
+
+| Modelo         | Tamanho | Observação                              |
+| -------------- | ------- | --------------------------------------- |
+| `gemma3:4b`    | ~3 GB   | Ótimo português e rápido — o padrão     |
+| `qwen2.5:7b`   | ~4,7 GB | Mais "esperto", um pouco mais lento     |
+| `llama3.1:8b`  | ~4,9 GB | Clássico, bom equilíbrio                 |
+
+## Próximas ideias (rumo: entender como a IA funciona)
+
+- [ ] Resposta em *streaming* (texto aparecendo aos poucos, palavra por palavra)
+- [ ] Deslizador de **temperatura** pra ver, ao vivo, a IA ficar mais/menos criativa
+- [ ] Mostrar os **tokens** (como a IA "fatia" o texto em pedaços)
+- [ ] Salvar a conversa entre sessões
+- [ ] Trocar o Ollama por código que roda o modelo direto (ver as engrenagens)
