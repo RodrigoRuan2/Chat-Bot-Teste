@@ -135,7 +135,7 @@ class App(ctk.CTk):
         baixo = ctk.CTkFrame(self, fg_color="transparent")
         baixo.pack(fill="x", padx=12, pady=(0, 12))
 
-        self.entrada = ctk.CTkEntry(baixo, placeholder_text="Fala com a Yato...")
+        self.entrada = ctk.CTkEntry(baixo, placeholder_text="Fala com o Yato...")
         self.entrada.pack(side="left", fill="x", expand=True)
         self.entrada.bind("<Return>", lambda evento: self.enviar())  # Enter envia
 
@@ -152,7 +152,7 @@ class App(ctk.CTk):
         if falas:
             self._bolha("— conversa restaurada · 🧹 pra começar do zero —", autor="dica")
         else:
-            self._bolha('Manda um "oi" pra Yato…', autor="dica")
+            self._bolha('Manda um "oi" pro Yato…', autor="dica")
         self.entrada.focus()
 
     def _bolha(self, texto, autor, detalhe=None):
@@ -200,7 +200,7 @@ class App(ctk.CTk):
     def _acordar_cerebro(self):
         """Roda numa thread de fundo ao abrir: carrega o modelo e mostra o status."""
         pronto = acordar()   # demora ~20s se o modelo estiver "frio"
-        texto = "● pronta" if pronto else "● Ollama fechado"
+        texto = "● pronto" if pronto else "● Ollama fechado"
         cor = "#2ecc71" if pronto else "#e74c3c"
         # after(0, ...) = "tela, atualiza isso quando puder" (thread-safe)
         self.after(0, lambda: self.status.configure(text=texto, text_color=cor))
