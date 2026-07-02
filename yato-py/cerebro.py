@@ -10,8 +10,11 @@ Repare que aqui NÃO existe nada de janela/botão. É de propósito: a lógica d
 import json
 import time
 from dataclasses import dataclass
+from datetime import datetime
 
 import requests
+
+from ferramentas import FERRAMENTAS, executar, descrever
 
 # Endereço do Ollama na SUA máquina. O Ollama abre esse "servidorzinho" local
 # enquanto está aberto (ícone perto do relógio do Windows).
@@ -40,6 +43,18 @@ LIMITE_HISTORICO = 20
 # 1.5 = se permite palavras improváveis (criativo, às vezes doido).
 TEMPERATURA_PADRAO = 0.8
 
+# Tamanho da "mesa de trabalho" (janela de contexto), em tokens. Subimos do
+# padrão 4096 pra 8192 porque os RESULTADOS DE BUSCA entram na mesa junto com
+# a conversa — sem espaço extra, uma busca grande empurraria o papo pra fora.
+# Custo: ~1 GB a mais de VRAM (cabe: sobram ~3 GB na GPU de 8 GB).
+CONTEXTO = 8192
+
+# Máximo de "voltas" de ferramenta numa mesma resposta. Trava de segurança:
+# sem ela, um modelo confuso poderia buscar -> buscar -> buscar... pra sempre.
+# 4 voltas = dá pro ciclo completo (buscar -> ler página -> ler outra ->
+# responder) sem abrir espaço pra círculos infinitos.
+MAX_VOLTAS_FERRAMENTAS = 4
+
 
 @dataclass
 class Resposta:
@@ -49,9 +64,10 @@ class Resposta:
     classe que só carrega dados.) Antes a gente jogava esses números fora;
     agora eles aparecem na tela — cada resposta vira um experimento medido.
     """
-    texto: str        # a fala da Yato
-    tokens: int       # quantos tokens ela gerou nesta resposta
+    texto: str        # a fala do Yato
+    tokens: int       # quantos tokens ele gerou nesta resposta
     segundos: float   # tempo gasto GERANDO (não conta carregar o modelo)
+    buscas: int = 0   # quantas buscas na web esta resposta precisou
 
     @property
     def velocidade(self):
@@ -78,97 +94,130 @@ def _podar(mensagens):
     return sistema + conversa[-LIMITE_HISTORICO:]
 
 
-def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None):
+def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar=None):
     """Manda a conversa pro Ollama e devolve uma Resposta (texto + métricas).
 
-    `mensagens` é uma lista no formato que a IA entende. Exemplo:
-        [
-            {"role": "system",    "content": "você é a Yato..."},
-            {"role": "user",      "content": "oi"},
-            {"role": "assistant", "content": "e aí, sumido!"},
-            {"role": "user",      "content": "tudo bem?"},
-        ]
+    `mensagens` é uma lista no formato que a IA entende (system/user/assistant).
 
-    `ao_receber` é um CALLBACK (uma função que você entrega pra ser chamada
-    de volta): se vier, ela é chamada com cada PEDACINHO de texto assim que
-    a IA o gera — é o "streaming", o texto pingando ao vivo. Se não vier,
-    o comportamento é o antigo: espera tudo e devolve no final.
+    Callbacks (funções que você entrega pra serem chamadas de volta):
+      - `ao_receber(pedaco)`: cada pedacinho de texto gerado (o streaming);
+      - `ao_buscar(termo)`: quando o modelo decide buscar na web — a tela
+        usa isso pra mostrar a decisão dele ao vivo.
 
-    Detalhe-chave de como a IA funciona: ela NÃO tem memória entre chamadas.
-    Cada chamada é uma folha em branco pra ela. Por isso mandamos a conversa
-    INTEIRA toda vez — é isso que cria a ilusão de que ela "lembra".
+    O CICLO DO AGENTE: junto da conversa vai a lista de FERRAMENTAS. O
+    modelo pode responder direto OU devolver um pedido estruturado
+    ("busque X"). Nesse caso, NÓS executamos a busca, anexamos o resultado
+    como mensagem de papel "tool", e chamamos o modelo DE NOVO — agora ele
+    escreve a resposta final lendo o que a busca trouxe. Pensa → age → lê
+    → responde: isso é um agente.
+
+    Detalhe-chave: a IA NÃO tem memória entre chamadas. Cada chamada é uma
+    folha em branco. Por isso a conversa inteira vai toda vez.
     """
-    try:
-        resposta = requests.post(
-            OLLAMA_URL,
-            json={
-                "model": MODELO,
-                # stream=True: o Ollama manda a resposta AOS PEDAÇOS, um
-                # token por linha, em vez de tudo de uma vez no final.
-                # É a geração palavra-a-palavra ficando visível.
-                "stream": True,
-                "messages": _podar(mensagens),   # o modelo só vê o que cabe na "mesa"
-                # Mantém o modelo carregado na memória por 10 min após a última
-                # conversa. Sem isso, ele sai da memória rápido e CADA mensagem
-                # paga de novo o carregamento (lento). Com isso, só a 1ª demora.
-                "keep_alive": "10m",
-                # Ajustes passados direto pro MODELO (não pro servidor):
-                "options": {
-                    "num_predict": MAX_TOKENS_RESPOSTA,  # trava dura de tamanho
-                    "temperature": temperatura,          # ousadia DESTA resposta
+    conversa = _podar(mensagens)   # cópia de trabalho (não mexe na original)
+
+    # O modelo NÃO sabe que dia é hoje (o treino tem data de corte) — sem
+    # isto, ele busca "lançamentos maio 2023" em pleno 2026 (aconteceu nos
+    # testes!). A data é DINÂMICA, então entra aqui, não na personalidade.
+    hoje = datetime.now().strftime("%d/%m/%Y")
+    conversa = [
+        {**m, "content": m["content"] + f"\n\nData de hoje: {hoje}."}
+        if m["role"] == "system" else m
+        for m in conversa
+    ]
+
+    buscas_feitas = 0
+
+    for _ in range(MAX_VOLTAS_FERRAMENTAS):
+        partes = []    # pedaços de texto desta volta
+        pedidos = []   # pedidos de ferramenta desta volta
+        final = {}     # a linha final do streaming (traz as métricas)
+
+        try:
+            resposta = requests.post(
+                OLLAMA_URL,
+                json={
+                    "model": MODELO,
+                    # stream=True: o Ollama manda a resposta AOS PEDAÇOS —
+                    # a geração palavra-a-palavra ficando visível.
+                    "stream": True,
+                    "messages": conversa,
+                    "tools": FERRAMENTAS,   # a lista de ferramentas disponíveis
+                    # Mantém o modelo carregado por 10 min após a última
+                    # conversa — sem isso, cada mensagem pagaria a carga (~20s).
+                    "keep_alive": "10m",
+                    # Ajustes passados direto pro MODELO (não pro servidor):
+                    "options": {
+                        "num_predict": MAX_TOKENS_RESPOSTA,  # trava de tamanho
+                        "temperature": temperatura,          # ousadia da resposta
+                        "num_ctx": CONTEXTO,                 # tamanho da "mesa"
+                    },
                 },
-            },
-            # Generoso de propósito: a PRIMEIRA chamada depois de ligar o PC
-            # inclui o carregamento do modelo na placa de vídeo (~20s, e até
-            # minutos em casos ruins). As seguintes respondem em segundos.
-            timeout=300,
-            stream=True,   # o do requests: "não baixe tudo, me dê aos poucos"
-        )
-        resposta.raise_for_status()             # erro HTTP vira exceção aqui
-
-        # ---- A leitura do pinga-pinga ----
-        # Cada linha que chega é um JSON pequeno: {"message": {"content": "pe"},
-        # "done": false}. A ÚLTIMA linha vem com done=true E as métricas.
-        partes = []
-        final = {}
-        for linha in resposta.iter_lines():
-            if not linha:
-                continue
-            dado = json.loads(linha)
-            pedaco = dado.get("message", {}).get("content", "")
-            if pedaco:
-                partes.append(pedaco)
-                if ao_receber:
-                    ao_receber(pedaco)   # avisa a tela: "chegou mais um pedaço!"
-            if dado.get("done"):
-                final = dado             # guarda a linha final (tem as métricas)
-
-    # ----- Tradução de erros: de "tecniquês" pra recado claro -----
-    except requests.exceptions.ConnectionError:
-        # Nem conseguiu conectar na porta 11434: o Ollama não está aberto.
-        raise CerebroError("Meu cérebro tá desligado 💀 (abre o Ollama e tenta de novo)")
-    except requests.exceptions.Timeout:
-        # Conectou, mas a resposta não veio a tempo (modelo travado/sobrecarregado).
-        raise CerebroError("Pensei, pensei... e deu branco 😵 Tenta de novo?")
-    except requests.exceptions.HTTPError:
-        if resposta.status_code == 404:
-            # 404 aqui significa: o Ollama não achou o modelo pedido.
-            raise CerebroError(
-                f"Cadê meu cérebro?! O modelo '{MODELO}' não está baixado 🤔 "
-                f"(no terminal: ollama pull {MODELO})"
+                # Generoso: a 1ª chamada após ligar o PC inclui carregar o
+                # modelo na GPU (~20-30s). As seguintes respondem em segundos.
+                timeout=300,
+                stream=True,   # o do requests: "me entregue aos poucos"
             )
-        raise CerebroError(f"O Ollama reclamou: erro {resposta.status_code} 😬")
-    except requests.exceptions.RequestException:
-        # Qualquer outro tropeço de rede (ex.: conexão caiu NO MEIO do streaming).
-        raise CerebroError("Nossa conexão caiu no meio da frase 😵 Tenta de novo?")
+            resposta.raise_for_status()         # erro HTTP vira exceção aqui
 
-    return Resposta(
-        texto="".join(partes).strip(),
-        tokens=final.get("eval_count", 0),
-        # eval_duration vem em NANOssegundos (bilionésimos de segundo);
-        # dividir por 1 bilhão converte pra segundos normais.
-        segundos=final.get("eval_duration", 0) / 1_000_000_000,
-    )
+            # ---- A leitura do pinga-pinga ----
+            for linha in resposta.iter_lines():
+                if not linha:
+                    continue
+                dado = json.loads(linha)
+                mensagem = dado.get("message", {})
+                pedaco = mensagem.get("content", "")
+                if pedaco:
+                    partes.append(pedaco)
+                    if ao_receber:
+                        ao_receber(pedaco)   # avisa a tela: "chegou mais um!"
+                # Pedidos de ferramenta chegam por aqui, já estruturados:
+                pedidos.extend(mensagem.get("tool_calls") or [])
+                if dado.get("done"):
+                    final = dado             # a linha final tem as métricas
+
+        # ----- Tradução de erros: de "tecniquês" pra recado claro -----
+        except requests.exceptions.ConnectionError:
+            raise CerebroError("Meu cérebro tá desligado 💀 (abre o Ollama e tenta de novo)")
+        except requests.exceptions.Timeout:
+            raise CerebroError("Pensei, pensei... e deu branco 😵 Tenta de novo?")
+        except requests.exceptions.HTTPError:
+            if resposta.status_code == 404:
+                raise CerebroError(
+                    f"Cadê meu cérebro?! O modelo '{MODELO}' não está baixado 🤔 "
+                    f"(no terminal: ollama pull {MODELO})"
+                )
+            raise CerebroError(f"O Ollama reclamou: erro {resposta.status_code} 😬")
+        except requests.exceptions.RequestException:
+            raise CerebroError("Nossa conexão caiu no meio da frase 😵 Tenta de novo?")
+
+        # Sem pedido de ferramenta? Então isto É a resposta final. Fim do ciclo.
+        if not pedidos:
+            return Resposta(
+                texto="".join(partes).strip(),
+                tokens=final.get("eval_count", 0),
+                # eval_duration vem em NANOssegundos; ÷ 1 bilhão = segundos.
+                segundos=final.get("eval_duration", 0) / 1_000_000_000,
+                buscas=buscas_feitas,
+            )
+
+        # O modelo pediu ferramenta(s): executa cada uma e anexa o resultado
+        # na conversa — na próxima volta do laço, ele lê e conclui.
+        conversa = conversa + [
+            {"role": "assistant", "content": "".join(partes), "tool_calls": pedidos}
+        ]
+        for pedido in pedidos:
+            nome = pedido.get("function", {}).get("name", "")
+            argumentos = pedido.get("function", {}).get("arguments", {}) or {}
+            if ao_buscar:
+                ao_buscar(descrever(nome, argumentos))  # mostra a decisão na tela
+            resultado = executar(nome, argumentos)
+            buscas_feitas += 1
+            conversa.append({"role": "tool", "content": resultado, "tool_name": nome})
+
+    # Estourou o limite de voltas: melhor parar com uma mensagem honesta
+    # do que deixar o modelo buscando em círculos.
+    raise CerebroError("Me enrolei nas buscas e não cheguei numa resposta 😵 Tenta de novo?")
 
 
 def acordar(tentativas=6, espera=5):

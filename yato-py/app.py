@@ -55,6 +55,8 @@ def limpar_markdown(texto):
     texto = re.sub(r"```[a-zA-Z0-9]*\n?", "", texto)          # cercas de código
     texto = texto.replace("**", "").replace("`", "")           # negrito e crases
     texto = re.sub(r"^#{1,6}\s*", "", texto, flags=re.MULTILINE)  # títulos #
+    # links [Nome](url) viram "Nome (url)" — legível sem renderizador
+    texto = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", texto)
     return texto.strip()
 
 
@@ -251,16 +253,23 @@ class App(ctk.CTk):
             # after(0, ...) despacha pra thread principal — só ela toca a tela.
             self.after(0, self._pedaco_chegou, pedaco)
 
+        def avisa_busca(termo):
+            # O modelo DECIDIU buscar na web: mostra a decisão dele ao vivo.
+            self.after(0, self._mostrar_busca, termo)
+
         detalhe = None
         try:
             r = pensar(self.mensagens, temperatura=temperatura,
-                       ao_receber=pinga_na_tela)
+                       ao_receber=pinga_na_tela, ao_buscar=avisa_busca)
             texto = r.texto
             # A etiqueta de laboratório desta resposta:
             detalhe = (
                 f"{r.tokens} tokens · {r.segundos:.1f}s · "
                 f"{r.velocidade:.0f} tok/s · 🌡️ {temperatura:.1f}"
             )
+            if r.buscas:
+                # conta buscas E leituras de página — toda ida à web
+                detalhe += f" · 🔍 {r.buscas}× web"
         except CerebroError as erro:
             # Falha CONHECIDA (Ollama fechado, modelo faltando, timeout...):
             # o cérebro já mandou a mensagem pronta e amigável — só mostrar.
@@ -274,6 +283,20 @@ class App(ctk.CTk):
 
         # Volta pra thread principal pra mexer na tela com segurança.
         self.after(0, self._mostrar_resposta, texto, detalhe)
+
+    def _mostrar_busca(self, descricao):
+        """Roda na thread principal: o balão mostra a ação da ferramenta.
+
+        A descrição já vem pronta do cérebro ("buscando na web: ..." ou
+        "lendo a página: ..."). Também ZERA o texto parcial: o que o modelo
+        tenha falado antes de decidir agir era "pensamento em voz alta" —
+        a resposta de verdade recomeça depois que a ferramenta voltar.
+        """
+        if self.rotulo_pensando is None:
+            return
+        self.texto_parcial = ""
+        self.rotulo_pensando.configure(text=f"🔍 {descricao}…")
+        self._rolar_pro_fim()
 
     def _pedaco_chegou(self, pedaco):
         """Roda na thread principal: cola mais um pedaço no balão ao vivo."""

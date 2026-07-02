@@ -14,18 +14,21 @@ app.py  (a janela)
    │  chama
    ▼
 cerebro.py  ──HTTP──►  Ollama em http://localhost:11434  ──►  modelo na sua GPU
+   │    │
+   │    └──► ferramentas.py  (busca na web quando o MODELO decide)
    │
 personalidade.py  (o texto que diz QUEM o Yato é)
 memoria.py        (salvar/carregar a conversa no disco)
 ```
 
-Quatro arquivos, quatro responsabilidades separadas — assim cada parte é
+Cinco arquivos, cinco responsabilidades separadas — assim cada parte é
 fácil de entender e mudar sozinha:
 
 | Arquivo             | Responsabilidade                                            |
 | ------------------- | ----------------------------------------------------------- |
 | `personalidade.py`  | O *system prompt*: quem o Yato é. **Edite à vontade.**     |
-| `cerebro.py`        | Falar com o Ollama. Nenhuma tela aqui — só a lógica da IA.   |
+| `cerebro.py`        | Falar com o Ollama + o ciclo do agente (pensa → busca → responde). |
+| `ferramentas.py`    | As "mãos": a busca na web que o Python executa quando o modelo pede. |
 | `memoria.py`        | Persistência: a conversa salva em `conversa.json`.           |
 | `app.py`            | A janela (CustomTkinter). Só tela; pede pro `cerebro` pensar.|
 
@@ -89,15 +92,17 @@ velocidade despenca. Esse é o teto do hardware.
 
 ## Ajustes finos (constantes no topo de `cerebro.py`)
 
-| Constante             | Padrão | O que controla                                          |
-| --------------------- | ------ | ------------------------------------------------------- |
-| `MODELO`              | qwen2.5:7b | Qual cérebro usar                                    |
-| `MAX_TOKENS_RESPOSTA` | 500    | Teto duro de tamanho de cada resposta                    |
-| `LIMITE_HISTORICO`    | 20     | Quantas falas recentes o modelo enxerga (personalidade sempre entra) |
+| Constante                 | Padrão | O que controla                                          |
+| ------------------------- | ------ | ------------------------------------------------------- |
+| `MODELO`                  | qwen2.5:7b | Qual cérebro usar                                    |
+| `MAX_TOKENS_RESPOSTA`     | 500    | Teto duro de tamanho de cada resposta                    |
+| `LIMITE_HISTORICO`        | 20     | Quantas falas recentes o modelo enxerga (personalidade sempre entra) |
+| `CONTEXTO`                | 8192   | A "mesa de trabalho" em tokens (conversa + resultados de busca) |
+| `MAX_VOLTAS_FERRAMENTAS`  | 4      | Máximo de idas à web numa resposta (trava anti-loop)     |
 
-O limite de histórico existe porque o modelo só "vê" 4096 tokens por vez:
-sem o corte controlado, conversas longas perderiam o começo **em silêncio** —
-inclusive a personalidade.
+O limite de histórico existe porque a mesa do modelo é finita: sem o corte
+controlado, conversas longas perderiam o começo **em silêncio** — inclusive
+a personalidade.
 
 ## O laboratório 🌡️
 
@@ -123,6 +128,29 @@ GPU enquanto você digita) — o status no topo mostra `● pronto` ou
 `● Ollama fechado`. As respostas chegam em **streaming**: o texto pinga na
 tela palavra por palavra, que é literalmente a geração token-a-token do
 modelo ficando visível.
+
+## O Yato busca na web 🔍
+
+O Yato é um **agente**: junto de cada mensagem, ele recebe a lista de
+ferramentas disponíveis e **decide sozinho** se precisa delas. Duas mãos:
+
+- **`buscar_web(termo)`** — busca no DuckDuckGo (via `ddgs`, grátis e sem
+  chave) e devolve os melhores resultados resumidos;
+- **`ler_pagina(url)`** — quando o resumo da busca não basta, ele **abre a
+  página** mais promissora e lê o conteúdo (limpo de HTML e cortado pra
+  caber no contexto).
+
+O balão mostra a ação ao vivo (`🔍 buscando na web: ...` / `🔍 lendo a
+página: ...`) e a etiqueta registra quantas idas à web a resposta usou.
+O cérebro também recebe a **data de hoje** a cada chamada — sem isso ele
+buscava "lançamentos maio 2023" em pleno 2026 (aconteceu nos testes).
+
+- O **modelo nunca toca na internet** — ele só pede; quem busca é o
+  `ferramentas.py`. Papo casual e conhecimento estável não geram busca.
+- **Privacidade:** o termo buscado sai da sua máquina (vai pro buscador),
+  como numa aba do navegador. O cérebro continua 100% local.
+- Sem internet? A busca falha **com elegância**: ele avisa que não
+  conseguiu verificar e responde com o que sabe.
 
 ## Sua conversa fica salva
 
@@ -163,21 +191,30 @@ O projeto evolui em **rodadas** — cada uma vira um commit com nome claro.
 - [x] Revisão das rodadas 1–2: `acordar()` com tentativas (status não mente
       mais quando o atalho abre Ollama + app juntos) e rotação do `yato.log`
 
-### 📋 Rodada 4 — Memória e usabilidade
+### ✅ Rodada 4 — Ferramentas: o Yato vira agente 🔍
+- [x] `ferramentas.py` com busca na web (DuckDuckGo, grátis e sem chave)
+- [x] `ler_pagina(url)`: quando o resumo da busca não basta, ele abre e
+      lê a página (HTML limpo, cortado pra caber no contexto)
+- [x] Ciclo do agente no `cerebro.py` (pensa → busca → lê → responde),
+      com trava de 4 voltas
+- [x] Aviso da ação ao vivo no balão + contador de idas à web na etiqueta
+- [x] Contexto 4096 → 8192 tokens (espaço pros resultados de busca)
+- [x] Data de hoje injetada a cada chamada (senão ele busca no passado)
+
+### 📋 Rodada 5 — Memória e usabilidade
 - [ ] **Memória de fatos**: o Yato anota coisas sobre você e te "conhece"
       entre sessões (os fatos entram no system prompt)
 - [ ] Texto das bolhas **selecionável/copiável**
 
-### 📋 Rodada 5 — Visão 👁️
+### 📋 Rodada 6 — Visão 👁️
 - [ ] Anexar prints/imagens no chat (o gemma3:4b já enxerga imagens)
 - [ ] Evolução: tradutor de tela com tecla de atalho
 
-### 📋 Rodada 6 — Voz 🎤
+### 📋 Rodada 7 — Voz 🎤
 - [ ] Ouvir (Whisper local) e falar (Piper, voz pt-BR) — tudo offline
 
 ### 💡 Depois (sem número ainda)
-- [ ] Ferramentas / function calling: o Yato executa ações de verdade
-      (o qwen2.5:7b, o cérebro atual, já suporta)
+- [ ] Mais ferramentas (clima, lembretes, ler arquivos...)
 - [ ] Mostrar os **tokens** (como a IA "fatia" o texto em pedaços)
 - [ ] O chefão final: trocar o Ollama por código que roda o modelo direto
       (ver as engrenagens)
