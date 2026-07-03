@@ -4,8 +4,11 @@ REM   Iniciar Yato - de um duplo-clique e a IA local abre.
 REM   (arquivo .bat = uma listinha de comandos que o Windows roda)
 REM ==============================================================
 
-REM 1) Liga o Ollama (o cerebro). Se ja estiver aberto, ele so ignora.
-start "" "%LOCALAPPDATA%\Programs\Ollama\ollama app.exe"
+REM 1) Liga o Ollama (o cerebro) SO SE ele ainda nao estiver rodando.
+REM    tasklist lista os processos abertos; se "ollama app.exe" ja
+REM    estiver la, pulamos - assim nao roubamos o foco a toa.
+tasklist /FI "IMAGENAME eq ollama app.exe" | find /I "ollama app.exe" >nul
+if errorlevel 1 start "" "%LOCALAPPDATA%\Programs\Ollama\ollama app.exe"
 
 REM 2) Entra na pasta do projeto (caminho absoluto = funciona de qualquer lugar).
 cd /d "C:\Users\ruanc\projetos\Chat bot\yato-py"
