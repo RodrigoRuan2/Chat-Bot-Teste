@@ -106,22 +106,30 @@ a personalidade.
 
 ## O laboratório 🌡️
 
-A janela tem um **deslizador de temperatura** (0.0 a 1.5) — o "grau de
-ousadia" do modelo ao escolher cada palavra:
+A janela tem um **seletor de modo** — por baixo, cada modo é uma
+*temperatura* (o "grau de ousadia" do modelo ao escolher cada palavra),
+mas com nome de uso em vez de número técnico:
 
-- **0.0** → sempre a palavra mais provável: respostas previsíveis e
-  repetíveis (a mesma pergunta dá a MESMA resposta).
-- **1.5** → aceita palavras improváveis: criativa, variada, às vezes doida.
+| Modo        | Temperatura | Pra quê                                     |
+| ----------- | ----------- | -------------------------------------------- |
+| 🎯 Preciso  | 0.2         | Fatos, listas, buscas — quase sem "sorteio"  |
+| 💬 Natural  | 0.7         | Papo do dia a dia (o padrão)                 |
+| 🎭 Lúdico   | 1.2         | Histórias e zoeira — **não confie em fatos** |
+
+Detalhe honesto: temperatura não controla "emoção" — controla o RISCO na
+escolha de cada palavra (previsível ↔ surpreendente). Os nomes dos modos
+indicam o uso certo de cada faixa.
 
 Cada resposta do Yato vem com uma **etiqueta de métricas**:
 
 ```
-15 tokens · 0.3s · 59 tok/s · 🌡️ 0.3
+15 tokens · 0.3s · 59 tok/s · 🌡️ 0.2
 ```
 
-= quantos tokens ela gerou, em quanto tempo, a velocidade da GPU e a
-temperatura usada. Experimento clássico: faça a mesma pergunta em 0.0 e em
-1.5 e compare (o botão **🧹 Nova conversa** zera a memória entre testes).
+= quantos tokens ele gerou, em quanto tempo, a velocidade da GPU e a
+temperatura real usada (assim você aprende o mapeamento modo → número).
+Experimento clássico: faça a mesma pergunta em 🎯 e em 🎭 e compare (o
+botão **🧹 Nova conversa** zera a memória entre testes).
 
 Ao abrir, o app **acorda o cérebro** em segundo plano (o modelo carrega na
 GPU enquanto você digita) — o status no topo mostra `● pronto` ou

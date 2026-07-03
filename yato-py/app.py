@@ -22,8 +22,27 @@ from pathlib import Path
 import customtkinter as ctk
 
 from personalidade import PERSONALIDADE
-from cerebro import pensar, acordar, CerebroError, MODELO, TEMPERATURA_PADRAO
+from cerebro import pensar, acordar, CerebroError, MODELO
 from memoria import salvar_conversa, carregar_conversa
+
+# ---- Os MODOS: nomes amigáveis pra temperatura ----
+# Temperatura é o "grau de ousadia" na escolha de cada palavra — mas um
+# número cru (0.8?) não diz nada pra quem nunca mexeu com IA. Então o
+# número virou MODO com nome de USO. O valor real continua aparecendo na
+# etiqueta de cada resposta: o laboratório segue vivo, e você aprende o
+# mapeamento vendo.
+MODOS = {
+    "🎯 Preciso": 0.2,   # fatos, listas, buscas — quase sem sorteio
+    "💬 Natural": 0.7,   # papo do dia a dia — equilíbrio (padrão)
+    "🎭 Lúdico": 1.2,    # histórias e zoeira — criativo (fatos, não!)
+}
+MODO_PADRAO = "💬 Natural"
+
+DICAS_MODO = {
+    "🎯 Preciso": "fatos, listas e buscas",
+    "💬 Natural": "papo do dia a dia",
+    "🎭 Lúdico": "histórias e zoeira — não confie em fatos aqui!",
+}
 
 # ---- Diário de bordo (yato.log, criado ao lado deste arquivo) ----
 # Por que existe: aberto pelo atalho (pythonw), o app NÃO tem terminal —
@@ -111,27 +130,25 @@ class App(ctk.CTk):
         self.area = ctk.CTkScrollableFrame(self)
         self.area.pack(fill="both", expand=True, padx=12, pady=(0, 12))
 
-        # ---- O experimento: controle de temperatura ----
-        # Temperatura = o quanto o modelo ARRISCA ao escolher cada palavra.
-        # Experimente a MESMA pergunta em 0.0 e em 1.5 e compare as respostas.
-        linha_temp = ctk.CTkFrame(self, fg_color="transparent")
-        linha_temp.pack(fill="x", padx=14, pady=(0, 4))
+        # ---- O seletor de MODO (a temperatura com nome de gente) ----
+        linha_modo = ctk.CTkFrame(self, fg_color="transparent")
+        linha_modo.pack(fill="x", padx=14, pady=(0, 4))
 
-        self.rotulo_temp = ctk.CTkLabel(
-            linha_temp,
-            text=f"🌡️ Temperatura: {TEMPERATURA_PADRAO:.1f}",
-            font=ctk.CTkFont(size=12),
-        )
-        self.rotulo_temp.pack(side="left")
+        ctk.CTkLabel(linha_modo, text="Modo:", font=ctk.CTkFont(size=12)).pack(side="left")
 
-        # from_/to = faixa; number_of_steps=15 faz o arrasto "pular" de 0.1
-        # em 0.1 (15 degraus entre 0.0 e 1.5), em vez de valores quebrados.
-        self.slider_temp = ctk.CTkSlider(
-            linha_temp, from_=0.0, to=1.5, number_of_steps=15,
-            command=self._temperatura_mudou,
+        # SegmentedButton = botões "grudados" onde um fica selecionado.
+        self.seletor_modo = ctk.CTkSegmentedButton(
+            linha_modo, values=list(MODOS.keys()), command=self._modo_mudou,
         )
-        self.slider_temp.set(TEMPERATURA_PADRAO)
-        self.slider_temp.pack(side="left", fill="x", expand=True, padx=(10, 0))
+        self.seletor_modo.set(MODO_PADRAO)
+        self.seletor_modo.pack(side="left", padx=(8, 8))
+
+        # A dica do modo atual — muda junto com a seleção.
+        self.rotulo_dica = ctk.CTkLabel(
+            linha_modo, text=DICAS_MODO[MODO_PADRAO],
+            font=ctk.CTkFont(size=11), text_color="#8a8aa0",
+        )
+        self.rotulo_dica.pack(side="left")
 
         # Linha de baixo: campo de digitar + botão enviar.
         baixo = ctk.CTkFrame(self, fg_color="transparent")
@@ -195,9 +212,9 @@ class App(ctk.CTk):
             pass  # se a API interna mudar, melhor não derrubar o app por isso
 
     # --------------------------------------------------------------- ações
-    def _temperatura_mudou(self, valor):
-        """Chamado pelo slider a cada arrasto: atualiza o número no rótulo."""
-        self.rotulo_temp.configure(text=f"🌡️ Temperatura: {valor:.1f}")
+    def _modo_mudou(self, modo):
+        """Chamado pelo seletor: atualiza a dica do modo escolhido."""
+        self.rotulo_dica.configure(text=DICAS_MODO.get(modo, ""))
 
     def _acordar_cerebro(self):
         """Roda numa thread de fundo ao abrir: carrega o modelo e mostra o status."""
@@ -238,9 +255,9 @@ class App(ctk.CTk):
         self.rotulo_pensando = self.bolha_pensando.winfo_children()[0]
 
         # 3) chama a IA numa THREAD de fundo, pra a janela não congelar.
-        #    A temperatura é lida AGORA, da posição atual do deslizador —
-        #    cada mensagem pode ir com uma temperatura diferente.
-        temperatura = round(self.slider_temp.get(), 1)
+        #    O modo é lido AGORA e traduzido pra temperatura — cada
+        #    mensagem pode ir com um modo diferente.
+        temperatura = MODOS[self.seletor_modo.get()]
         threading.Thread(
             target=self._buscar_resposta, args=(temperatura,), daemon=True
         ).start()
