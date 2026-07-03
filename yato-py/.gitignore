@@ -9,5 +9,6 @@ __pycache__/
 yato.log
 yato.log.*
 
-# Sua conversa com a Yato é DADO PESSOAL, não código — fica só aqui
+# Sua conversa e os fatos sobre você são DADO PESSOAL, não código
 conversa.json
+fatos.json

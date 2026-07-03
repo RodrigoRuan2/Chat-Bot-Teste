@@ -14,7 +14,8 @@ from datetime import datetime
 
 import requests
 
-from ferramentas import FERRAMENTAS, executar, descrever
+from ferramentas import FERRAMENTAS, FERRAMENTAS_WEB, executar, descrever
+from memoria import carregar_fatos
 
 # Endereço do Ollama na SUA máquina. O Ollama abre esse "servidorzinho" local
 # enquanto está aberto (ícone perto do relógio do Windows).
@@ -130,6 +131,13 @@ def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar
     #    "continua a lista" a fonte já evaporou — e o modelo, mandado a
     #    continuar sem material, continuava INVENTANDO (visto nos prints!).
     extra = f"\n\nData de hoje: {datetime.now().strftime('%d/%m/%Y')}."
+    # 3) Os FATOS da memória permanente: relidos do disco a toda chamada
+    #    (fato anotado agora já vale na próxima mensagem). É a "cola" que
+    #    faz um modelo sem memória parecer que conhece o usuário.
+    fatos = carregar_fatos()
+    if fatos:
+        extra += ("\n\nO que você já sabe sobre o usuário (memória permanente):\n"
+                  + "\n".join(f"- {f}" for f in fatos))
     if fonte_anterior:
         extra += (
             "\n\n=== FONTE DA PESQUISA ANTERIOR (desta mesma conversa) ===\n"
@@ -232,8 +240,11 @@ def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar
             if ao_buscar:
                 ao_buscar(descrever(nome, argumentos))  # mostra a decisão na tela
             resultado = executar(nome, argumentos)
-            buscas_feitas += 1
-            coletado.append(resultado)   # guarda pra virar a "fonte" do turno
+            if nome in FERRAMENTAS_WEB:
+                # só idas à web contam na etiqueta e viram "fonte";
+                # anotar/esquecer fato é ação local, não pesquisa
+                buscas_feitas += 1
+                coletado.append(resultado)
             conversa.append({"role": "tool", "content": resultado, "tool_name": nome})
 
     # Estourou o limite de voltas: melhor parar com uma mensagem honesta

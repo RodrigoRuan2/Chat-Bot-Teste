@@ -64,3 +64,77 @@ def carregar_conversa():
         and m.get("role") in ("user", "assistant")
         and isinstance(m.get("content"), str)
     ]
+
+
+# ===========================================================================
+#  MEMÓRIA DE FATOS — o que o Yato sabe sobre VOCÊ, entre sessões.
+#
+#  Diferença crucial pro conversa.json: conversa é o PAPO (o 🧹 apaga);
+#  fatos são CONHECIMENTO duradouro ("estuda React", "tem RTX 4060 Ti") —
+#  sobrevivem à limpeza e entram no system prompt de toda conversa.
+#  É o mesmo mecanismo de qualquer assistente com "memória": um amnésico
+#  com um caderno — anota, relê, parece que lembra.
+# ===========================================================================
+
+ARQUIVO_FATOS = Path(__file__).with_name("fatos.json")
+
+# Teto de fatos. Por quê: TODOS entram no prompt a cada mensagem — memória
+# grande demais devora a "mesa" de contexto. 20 fatos curtos ≈ baratíssimo.
+MAX_FATOS = 20
+
+
+def carregar_fatos():
+    """Lê os fatos salvos. Qualquer problema → lista vazia (leitura segura)."""
+    try:
+        dados = json.loads(ARQUIVO_FATOS.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    except (OSError, json.JSONDecodeError):
+        logging.exception("fatos.json ilegível — seguindo sem fatos")
+        return []
+    if not isinstance(dados, list):
+        return []
+    return [f.strip() for f in dados if isinstance(f, str) and f.strip()][:MAX_FATOS]
+
+
+def salvar_fatos(fatos):
+    try:
+        ARQUIVO_FATOS.write_text(
+            json.dumps(fatos, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except OSError:
+        logging.exception("Não consegui salvar os fatos")
+
+
+def anotar_fato(fato):
+    """Anota um fato novo. Devolve um recado (vai pro modelo, como ferramenta).
+
+    Proteções: fato vazio, repetido (ignorando maiúsculas) e memória cheia —
+    o modelo recebe o motivo em texto e se explica pro usuário.
+    """
+    fato = " ".join(str(fato).split())
+    if not fato:
+        return "(Fato vazio — nada anotado.)"
+    fatos = carregar_fatos()
+    if any(fato.lower() == f.lower() for f in fatos):
+        return "(Esse fato já estava anotado.)"
+    if len(fatos) >= MAX_FATOS:
+        return (f"(Memória cheia: já são {MAX_FATOS} fatos. "
+                "Peça ao usuário qual esquecer antes de anotar outro.)")
+    fatos.append(fato)
+    salvar_fatos(fatos)
+    return f"(Anotado na memória permanente: {fato})"
+
+
+def esquecer_fato(trecho):
+    """Apaga fatos que contenham o trecho. Devolve o resultado como recado."""
+    trecho = str(trecho).strip().lower()
+    if not trecho:
+        return "(Diga qual fato esquecer.)"
+    fatos = carregar_fatos()
+    restantes = [f for f in fatos if trecho not in f.lower()]
+    removidos = len(fatos) - len(restantes)
+    if removidos == 0:
+        return "(Não achei nenhum fato com esse trecho.)"
+    salvar_fatos(restantes)
+    return f"({removidos} fato(s) esquecido(s).)"

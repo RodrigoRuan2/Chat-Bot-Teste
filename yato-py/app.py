@@ -23,7 +23,7 @@ import customtkinter as ctk
 
 from personalidade import PERSONALIDADE
 from cerebro import pensar, acordar, CerebroError, MODELO
-from memoria import salvar_conversa, carregar_conversa
+from memoria import salvar_conversa, carregar_conversa, carregar_fatos
 
 # ---- Os MODOS: nomes amigáveis pra temperatura ----
 # Temperatura é o "grau de ousadia" na escolha de cada palavra — mas um
@@ -122,6 +122,15 @@ class App(ctk.CTk):
             command=self.nova_conversa,
         ).pack(side="right")
 
+        # Mostra a memória DIRETO do arquivo, sem passar pelo modelo:
+        # perguntar "o que você sabe?" pro modelo rende enfeite (testado!);
+        # este botão é o gabarito — determinístico, sempre a verdade.
+        ctk.CTkButton(
+            topo, text="📌 Memória", width=100,
+            fg_color="transparent", border_width=1,
+            command=self.mostrar_memoria,
+        ).pack(side="right", padx=(0, 8))
+
         # Status do cérebro. Repare: cor E texto mudam juntos — nunca dependa
         # só da cor (acessibilidade: daltônico também precisa entender).
         self.status = ctk.CTkLabel(topo, text="● acordando…", text_color="#f1c40f")
@@ -190,6 +199,11 @@ class App(ctk.CTk):
         rotulo = ctk.CTkLabel(balao, text=texto, wraplength=360, justify="left")
         rotulo.pack(padx=12, pady=(8, 2 if detalhe else 8))
 
+        # Botão direito copia o texto do balão (CTkLabel não deixa selecionar
+        # com o mouse — este é o atalho de usabilidade). Lê o texto NA HORA
+        # do clique, então funciona até em balão que ainda está "pingando".
+        rotulo.bind("<Button-3>", lambda e: self._copiar(rotulo.cget("text")))
+
         if detalhe:
             self._etiqueta(balao, detalhe)
 
@@ -203,6 +217,16 @@ class App(ctk.CTk):
             balao, text=detalhe, wraplength=360, justify="left",
             font=ctk.CTkFont(size=10), text_color="#8a8aa0",
         ).pack(padx=12, pady=(0, 6))
+
+    def _copiar(self, texto):
+        """Copia o texto pro clipboard e dá um aviso rápido no status."""
+        self.clipboard_clear()
+        self.clipboard_append(texto)
+        texto_antes = self.status.cget("text")
+        cor_antes = self.status.cget("text_color")
+        self.status.configure(text="📋 copiado!", text_color="#2ecc71")
+        self.after(1500, lambda: self.status.configure(
+            text=texto_antes, text_color=cor_antes))
 
     def _rolar_pro_fim(self):
         """Rola a área de mensagens até o fim (pra ver a mensagem mais nova)."""
@@ -224,6 +248,17 @@ class App(ctk.CTk):
         cor = "#2ecc71" if pronto else "#e74c3c"
         # after(0, ...) = "tela, atualiza isso quando puder" (thread-safe)
         self.after(0, lambda: self.status.configure(text=texto, text_color=cor))
+
+    def mostrar_memoria(self):
+        """Bolha com os fatos REAIS do fatos.json — o gabarito da memória."""
+        fatos = carregar_fatos()
+        if fatos:
+            texto = "📌 Anotado na memória (fatos.json):\n" + \
+                    "\n".join(f"• {f}" for f in fatos) + \
+                    '\n(pra apagar: peça "esqueça que...")'
+        else:
+            texto = "📌 Memória vazia — nenhum fato anotado ainda."
+        self._bolha(texto, autor="dica")
 
     def nova_conversa(self):
         """Zera o papo: histórico volta ao começo (só a personalidade)."""
@@ -319,7 +354,7 @@ class App(ctk.CTk):
         if self.rotulo_pensando is None:
             return
         self.texto_parcial = ""
-        self.rotulo_pensando.configure(text=f"🔍 {descricao}…")
+        self.rotulo_pensando.configure(text=f"{descricao}…")  # já vem com emoji
         self._rolar_pro_fim()
 
     def _pedaco_chegou(self, pedaco):

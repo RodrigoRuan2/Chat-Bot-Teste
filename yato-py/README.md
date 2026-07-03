@@ -29,7 +29,7 @@ fácil de entender e mudar sozinha:
 | `personalidade.py`  | O *system prompt*: quem o Yato é. **Edite à vontade.**     |
 | `cerebro.py`        | Falar com o Ollama + o ciclo do agente (pensa → busca → responde). |
 | `ferramentas.py`    | As "mãos": a busca na web que o Python executa quando o modelo pede. |
-| `memoria.py`        | Persistência: a conversa salva em `conversa.json`.           |
+| `memoria.py`        | Persistência: a conversa (`conversa.json`) e os fatos sobre você (`fatos.json`). |
 | `app.py`            | A janela (CustomTkinter). Só tela; pede pro `cerebro` pensar.|
 
 Essa divisão é de propósito: dá pra testar o `cerebro.py` sozinho (sem abrir a
@@ -177,6 +177,31 @@ Ao fechar e reabrir, o Yato **lembra da conversa**: cada troca é gravada em
 - O botão **🧹 Nova conversa** apaga a memória da tela E do disco.
 - `conversa.json` está no `.gitignore`: conversa é dado pessoal, não código.
 
+## O Yato lembra de você 📌
+
+Além da conversa, o Yato tem **memória permanente de fatos**: quando você
+revela algo duradouro ("me chamo Ruan", "estudo React") ou pede *"lembra
+disso"*, **ele mesmo decide anotar** — via ferramenta `anotar_fato`, com o
+aviso `📌 anotando: ...` aparecendo ao vivo. Os fatos:
+
+- Ficam em `fatos.json` (legível e editável na mão — é seu);
+- O botão **📌 Memória** no topo mostra os fatos DIRETO do arquivo — sem
+  passar pelo modelo. Por quê: perguntar "o que você sabe?" no chat rende
+  enfeite (o 7B inventa lembranças por cima das reais); o botão é o
+  gabarito determinístico;
+- Entram no system prompt de **toda** conversa: ele te "conhece" ao abrir;
+- **Sobrevivem ao 🧹** (conversa é papo; fato é conhecimento) — pra apagar,
+  peça *"esquece que..."* (ferramenta `esquecer_fato`);
+- Têm teto de 20 (todos entram na "mesa" a cada mensagem — memória
+  gigante devoraria o contexto);
+- Estão no `.gitignore`: fato sobre você é dado pessoal, não código.
+
+Conceito por trás: o modelo não aprende nada de verdade (pesos congelados)
+— ele é um "amnésico com caderno": anota, relê a cada conversa, e parece
+que lembra. É como a memória de qualquer assistente de IA funciona.
+
+Bônus de usabilidade: **botão direito em qualquer balão copia o texto** 📋.
+
 ## Se algo der errado
 
 - O Yato responde com mensagens diferentes pra cada problema: Ollama fechado,
@@ -221,10 +246,16 @@ O projeto evolui em **rodadas** — cada uma vira um commit com nome claro.
       em vez de inventar (verificado: 5/6 itens do turno 2 rastreáveis)
 - [x] Modos no lugar de temperatura crua (🎯 Preciso · 💬 Natural · 🎭 Lúdico)
 
-### 📋 Rodada 5 — Memória e usabilidade
-- [ ] **Memória de fatos**: o Yato anota coisas sobre você e te "conhece"
-      entre sessões (os fatos entram no system prompt)
-- [ ] Texto das bolhas **selecionável/copiável**
+### ✅ Rodada 5 — Memória e usabilidade
+- [x] **Memória de fatos**: o Yato anota (`anotar_fato`) e esquece
+      (`esquecer_fato`) fatos sobre você por decisão própria; tudo em
+      `fatos.json`, injetado no system prompt — ele te conhece entre sessões
+- [x] Regra anti-teatro estendida à memória (dizer "anotado" sem chamar
+      a ferramenta é proibido — pego nos testes!)
+- [x] Botão **📌 Memória**: os fatos direto do arquivo, sem o modelo
+      enfeitar (pego no print do Ruan: ele inventou uma viagem à
+      "Tokyo Disneynile" por cima do único fato real)
+- [x] Botão direito copia o texto de qualquer balão 📋
 
 ### 📋 Rodada 6 — Visão 👁️
 - [ ] Anexar prints/imagens no chat (o gemma3:4b já enxerga imagens)

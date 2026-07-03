@@ -18,6 +18,8 @@ import requests
 from bs4 import BeautifulSoup
 from ddgs import DDGS
 
+from memoria import anotar_fato, esquecer_fato
+
 # Teto de texto devolvido por página lida. Por quê: a "mesa" do modelo tem
 # 8192 tokens no total — uma página inteira de portal facilmente passa disso
 # sozinha e expulsaria a conversa. ~6000 caracteres ≈ 1500-2000 tokens: cabe
@@ -183,6 +185,51 @@ FERRAMENTAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "anotar_fato",
+            "description": (
+                "Anota um fato DURADOURO sobre o usuário na sua memória "
+                "permanente (nome, gostos, projetos, equipamento, "
+                "preferências). Use quando o usuário revelar algo sobre si "
+                "que valha lembrar em conversas FUTURAS, ou quando ele pedir "
+                "explicitamente pra você lembrar. NÃO anote coisas "
+                "passageiras (o humor do dia, a pergunta atual)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fato": {
+                        "type": "string",
+                        "description": "O fato, curto e direto. Ex: 'Se chama Ruan e estuda React'",
+                    }
+                },
+                "required": ["fato"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "esquecer_fato",
+            "description": (
+                "Apaga fatos da memória permanente. Use quando o usuário "
+                "pedir pra esquecer algo ou corrigir uma informação antiga "
+                "sobre ele."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trecho": {
+                        "type": "string",
+                        "description": "Uma palavra ou trecho do fato a apagar",
+                    }
+                },
+                "required": ["trecho"],
+            },
+        },
+    },
 ]
 
 # Mapa nome -> função. Ferramenta nova = escrever a função, a ficha
@@ -190,17 +237,27 @@ FERRAMENTAS = [
 _EXECUTORES = {
     "buscar_web": buscar_web,
     "ler_pagina": ler_pagina,
+    "anotar_fato": anotar_fato,
+    "esquecer_fato": esquecer_fato,
 }
+
+# Quais ferramentas VÃO À WEB (pro contador da etiqueta e pra "fonte").
+# Anotar/esquecer fato mexem só no disco local — não são "idas à web".
+FERRAMENTAS_WEB = {"buscar_web", "ler_pagina"}
 
 
 def descrever(nome, argumentos):
     """Frase curta do que a ferramenta está fazendo — pro aviso na tela."""
     if nome == "buscar_web":
         # "pesquisando" porque a busca enriquecida também LÊ a melhor página
-        return f"pesquisando na web: {argumentos.get('termo', '?')}"
+        return f"🔍 pesquisando na web: {argumentos.get('termo', '?')}"
     if nome == "ler_pagina":
-        return f"lendo a página: {argumentos.get('url', '?')[:60]}"
-    return f"usando {nome}"
+        return f"🔍 lendo a página: {argumentos.get('url', '?')[:60]}"
+    if nome == "anotar_fato":
+        return f"📌 anotando: {argumentos.get('fato', '?')[:60]}"
+    if nome == "esquecer_fato":
+        return f"🗑️ esquecendo: {argumentos.get('trecho', '?')[:60]}"
+    return f"🛠️ usando {nome}"
 
 
 def executar(nome, argumentos):
