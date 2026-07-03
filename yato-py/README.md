@@ -158,6 +158,9 @@ buscava "lançamentos maio 2023" em pleno 2026 (aconteceu nos testes).
 
 - O **modelo nunca toca na internet** — ele só pede; quem busca é o
   `ferramentas.py`. Papo casual e conhecimento estável não geram busca.
+- **A fonte fica na mesa**: o que a última pesquisa trouxe é guardado e
+  reinjetado nos turnos seguintes da mesma conversa — um "continua a
+  lista" segue lendo da fonte real em vez de inventar (o 🧹 descarta).
 - **Privacidade:** o termo buscado sai da sua máquina (vai pro buscador),
   como numa aba do navegador. O cérebro continua 100% local.
 - Sem internet? A busca falha **com elegância**: ele avisa que não
@@ -214,6 +217,9 @@ O projeto evolui em **rodadas** — cada uma vira um commit com nome claro.
 - [x] **Busca enriquecida**: a busca já lê a melhor página sozinha
       (verificado: 7/7 itens da resposta rastreáveis até a fonte)
 - [x] Listas longas em blocos paginados ("continua" segue de onde parou)
+- [x] **Fonte persistente entre turnos**: o "continua" relê a fonte real
+      em vez de inventar (verificado: 5/6 itens do turno 2 rastreáveis)
+- [x] Modos no lugar de temperatura crua (🎯 Preciso · 💬 Natural · 🎭 Lúdico)
 
 ### 📋 Rodada 5 — Memória e usabilidade
 - [ ] **Memória de fatos**: o Yato anota coisas sobre você e te "conhece"

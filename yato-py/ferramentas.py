@@ -97,10 +97,23 @@ def _baixar_texto(url, limite):
     )
     resposta.raise_for_status()
     sopa = BeautifulSoup(resposta.text, "html.parser")
-    # scripts/estilos não são conteúdo — fora antes de extrair o texto
-    for lixo in sopa(["script", "style", "noscript"]):
+
+    # MIRA NO MIOLO: páginas têm anatomia — <article>/<main> é o conteúdo;
+    # <nav>/<header>/<footer> é a moldura (menus, rodapé). Sem este passo,
+    # o teto de caracteres era DEVORADO pelo menu do site e o conteúdo de
+    # verdade nem chegava ao modelo (pego no diagnóstico: 170 linhas de
+    # "Home / SiteMap / 2015..." antes do guia começar).
+    principal = sopa.find("article") or sopa.find("main") or sopa
+    for lixo in principal(["script", "style", "noscript",
+                           "nav", "header", "footer", "aside", "form"]):
         lixo.decompose()
-    texto = " ".join(sopa.get_text(separator=" ").split())
+
+    # PRESERVA as quebras de linha: um guia tem estrutura (um título por
+    # linha, staff embaixo). Esmagar tudo numa linha fazia o modelo amassar
+    # títulos e carimbar o staff de um anime nos vizinhos (pego na
+    # auditoria). Limpa só os espaços DENTRO de cada linha.
+    linhas = (" ".join(l.split()) for l in principal.get_text(separator="\n").splitlines())
+    texto = "\n".join(l for l in linhas if l)
     if len(texto) > limite:
         texto = texto[:limite] + " (...página cortada aqui...)"
     return texto

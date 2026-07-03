@@ -95,6 +95,7 @@ class App(ctk.CTk):
         self.bolha_pensando = None   # o balão da resposta em andamento
         self.rotulo_pensando = None  # o TEXTO dentro dele (atualiza no streaming)
         self.texto_parcial = ""      # o que já chegou da resposta atual
+        self.fonte_atual = ""        # o que a última pesquisa trouxe (pro "continua")
 
         self._montar_tela()
 
@@ -230,6 +231,7 @@ class App(ctk.CTk):
             return  # esperando resposta — não puxar o tapete da thread
 
         self.mensagens = [{"role": "system", "content": PERSONALIDADE}]
+        self.fonte_atual = ""             # conversa nova = fonte antiga pro lixo
         salvar_conversa(self.mensagens)   # apaga a conversa salva no disco também
         for filho in self.area.winfo_children():
             filho.destroy()   # limpa todas as bolhas da tela
@@ -277,8 +279,13 @@ class App(ctk.CTk):
         detalhe = None
         try:
             r = pensar(self.mensagens, temperatura=temperatura,
-                       ao_receber=pinga_na_tela, ao_buscar=avisa_busca)
+                       ao_receber=pinga_na_tela, ao_buscar=avisa_busca,
+                       # a fonte do turno passado volta pra mesa — é ela
+                       # que torna o "continua" honesto em vez de inventado
+                       fonte_anterior=self.fonte_atual or None)
             texto = r.texto
+            if r.fonte:
+                self.fonte_atual = r.fonte   # pesquisa nova substitui a antiga
             # A etiqueta de laboratório desta resposta:
             detalhe = (
                 f"{r.tokens} tokens · {r.segundos:.1f}s · "

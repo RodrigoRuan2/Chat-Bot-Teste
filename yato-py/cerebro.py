@@ -55,6 +55,11 @@ CONTEXTO = 8192
 # responder) sem abrir espaço pra círculos infinitos.
 MAX_VOLTAS_FERRAMENTAS = 4
 
+# Teto da "fonte" guardada entre turnos (o que a última pesquisa trouxe).
+# Ela é reinjetada a cada mensagem seguinte da MESMA conversa — precisa
+# caber na mesa junto com todo o resto.
+MAX_CARACTERES_FONTE = 5000
+
 
 @dataclass
 class Resposta:
@@ -67,7 +72,8 @@ class Resposta:
     texto: str        # a fala do Yato
     tokens: int       # quantos tokens ele gerou nesta resposta
     segundos: float   # tempo gasto GERANDO (não conta carregar o modelo)
-    buscas: int = 0   # quantas buscas na web esta resposta precisou
+    buscas: int = 0   # quantas idas à web esta resposta precisou
+    fonte: str = ""   # o que as ferramentas trouxeram (pra reusar no próximo turno)
 
     @property
     def velocidade(self):
@@ -94,7 +100,8 @@ def _podar(mensagens):
     return sistema + conversa[-LIMITE_HISTORICO:]
 
 
-def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar=None):
+def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar=None,
+           fonte_anterior=None):
     """Manda a conversa pro Ollama e devolve uma Resposta (texto + métricas).
 
     `mensagens` é uma lista no formato que a IA entende (system/user/assistant).
@@ -116,17 +123,27 @@ def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar
     """
     conversa = _podar(mensagens)   # cópia de trabalho (não mexe na original)
 
-    # O modelo NÃO sabe que dia é hoje (o treino tem data de corte) — sem
-    # isto, ele busca "lançamentos maio 2023" em pleno 2026 (aconteceu nos
-    # testes!). A data é DINÂMICA, então entra aqui, não na personalidade.
-    hoje = datetime.now().strftime("%d/%m/%Y")
+    # ---- Complementos dinâmicos do system prompt ----
+    # 1) A data: o modelo NÃO sabe que dia é hoje (treino tem data de corte).
+    #    Sem isto, ele busca "lançamentos maio 2023" em pleno 2026.
+    # 2) A fonte anterior: o que a ÚLTIMA pesquisa trouxe. Sem isto, num
+    #    "continua a lista" a fonte já evaporou — e o modelo, mandado a
+    #    continuar sem material, continuava INVENTANDO (visto nos prints!).
+    extra = f"\n\nData de hoje: {datetime.now().strftime('%d/%m/%Y')}."
+    if fonte_anterior:
+        extra += (
+            "\n\n=== FONTE DA PESQUISA ANTERIOR (desta mesma conversa) ===\n"
+            "Use isto para continuar listas e responder perguntas de "
+            "acompanhamento SEM inventar. Se não bastar, busque de novo.\n"
+            + fonte_anterior
+        )
     conversa = [
-        {**m, "content": m["content"] + f"\n\nData de hoje: {hoje}."}
-        if m["role"] == "system" else m
+        {**m, "content": m["content"] + extra} if m["role"] == "system" else m
         for m in conversa
     ]
 
     buscas_feitas = 0
+    coletado = []   # tudo que as ferramentas trouxerem nesta pensada
 
     for _ in range(MAX_VOLTAS_FERRAMENTAS):
         partes = []    # pedaços de texto desta volta
@@ -199,6 +216,9 @@ def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar
                 # eval_duration vem em NANOssegundos; ÷ 1 bilhão = segundos.
                 segundos=final.get("eval_duration", 0) / 1_000_000_000,
                 buscas=buscas_feitas,
+                # A fonte desta pensada, cortada no teto — quem chamou pode
+                # guardá-la e devolvê-la no próximo turno (fonte_anterior).
+                fonte="\n\n".join(coletado)[:MAX_CARACTERES_FONTE],
             )
 
         # O modelo pediu ferramenta(s): executa cada uma e anexa o resultado
@@ -213,6 +233,7 @@ def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar
                 ao_buscar(descrever(nome, argumentos))  # mostra a decisão na tela
             resultado = executar(nome, argumentos)
             buscas_feitas += 1
+            coletado.append(resultado)   # guarda pra virar a "fonte" do turno
             conversa.append({"role": "tool", "content": resultado, "tool_name": nome})
 
     # Estourou o limite de voltas: melhor parar com uma mensagem honesta
