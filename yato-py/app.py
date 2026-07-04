@@ -94,17 +94,11 @@ class App(ctk.CTk):
         self.minsize(420, 480)
 
         # ---- ESTADO: o histórico da conversa mora aqui ----
-        # Personalidade sempre FRESCA (vem do código, nunca do disco) +
-        # as falas da conversa MAIS RECENTE do histórico (se houver).
-        # self.arquivo_conversa = onde a conversa atual é salva (None = nova,
-        # o arquivo nasce na primeira mensagem).
+        # Personalidade sempre FRESCA (vem do código, nunca do disco). O app
+        # SEMPRE abre numa conversa NOVA (arquivo_conversa=None, nasce na 1ª
+        # mensagem) — as conversas anteriores ficam guardadas no histórico 📜.
         self.mensagens = [{"role": "system", "content": PERSONALIDADE}]
-        historico = listar_conversas()
-        if historico:
-            self.arquivo_conversa = historico[0][0]
-            self.mensagens += carregar_falas_de(self.arquivo_conversa)
-        else:
-            self.arquivo_conversa = None
+        self.arquivo_conversa = None
 
         self.bolha_pensando = None   # o balão da resposta em andamento
         self.rotulo_pensando = None  # o TEXTO dentro dele (atualiza no streaming)

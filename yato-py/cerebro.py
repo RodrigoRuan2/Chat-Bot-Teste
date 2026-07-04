@@ -8,6 +8,7 @@ Repare que aqui NÃO existe nada de janela/botão. É de propósito: a lógica d
 """
 
 import json
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -103,6 +104,25 @@ def _podar(mensagens):
     return sistema + conversa[-LIMITE_HISTORICO:]
 
 
+# Detector de "promessa vazia": o 7B às vezes escreve "vou verificar isso"
+# e encerra o turno SEM chamar a ferramenta (o teatro de busca). Esta regex
+# reconhece a intenção-de-agir-sem-agir; casada com "nada foi buscado", é o
+# gatilho pra dar um empurrão no modelo.
+_PROMESSA_VAZIA = re.compile(
+    r"\b(vou|irei|vamos|deixa|deixe|já vou|já te|posso)\b[^.!?\n]{0,45}"
+    r"\b(verific\w+|pesquis\w+|busc\w+|procur\w+|checar|confer\w+|"
+    r"consult\w+|dar uma olhada|olhar isso|ver isso|ver aqui|"
+    r"ver pra você|averiguar)\b",
+    re.IGNORECASE,
+)
+
+
+def _promessa_vazia(texto):
+    """True se o texto é uma PROMESSA de agir sem ter agido (e é curto — uma
+    resposta longa com conteúdo real não conta, mesmo mencionando 'verificar')."""
+    return len(texto) < 220 and bool(_PROMESSA_VAZIA.search(texto))
+
+
 def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar=None,
            fonte_anterior=None, imagem=None):
     """Manda a conversa pro Ollama e devolve uma Resposta (texto + métricas).
@@ -128,6 +148,7 @@ def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar
 
     buscas_feitas = 0
     olhadas_feitas = 0
+    empurrao_dado = False   # o "anti-teatro" só empurra UMA vez, pra não virar loop
     coletado = []   # tudo que as ferramentas trouxerem nesta pensada
 
     # ---- Complementos dinâmicos do system prompt ----
@@ -252,8 +273,27 @@ def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar
 
         # Sem pedido de ferramenta? Então isto É a resposta final. Fim do ciclo.
         if not pedidos:
+            texto_final = "".join(partes).strip()
+
+            # ANTI-TEATRO: prometeu "vou verificar" mas não buscou/olhou nada?
+            # Não entregamos a promessa oca (que parecia "travar" pro usuário).
+            # Damos UM empurrão e rodamos outra volta — aí ele age de verdade.
+            if (not empurrao_dado and buscas_feitas == 0 and olhadas_feitas == 0
+                    and _promessa_vazia(texto_final)):
+                empurrao_dado = True
+                conversa = conversa + [
+                    {"role": "assistant", "content": texto_final},
+                    {"role": "user", "content": (
+                        "Você disse que ia verificar mas NÃO chamou nenhuma "
+                        "ferramenta. Se a pergunta pede informação atual, CHAME "
+                        "buscar_web AGORA com o termo certo. Se não precisa de "
+                        "busca, responda direto com o que você já sabe. Não "
+                        "prometa de novo — AJA nesta resposta.")},
+                ]
+                continue   # volta ao laço: nova chance, agora empurrado
+
             return Resposta(
-                texto="".join(partes).strip(),
+                texto=texto_final,
                 tokens=final.get("eval_count", 0),
                 # eval_duration vem em NANOssegundos; ÷ 1 bilhão = segundos.
                 segundos=final.get("eval_duration", 0) / 1_000_000_000,
