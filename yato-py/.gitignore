@@ -13,3 +13,7 @@ yato.log.*
 conversa.json
 conversas/
 fatos.json
+
+# Modelos de voz do Piper (~60 MB cada) — baixáveis, como o modelo do Ollama.
+# Quem clonar baixa a voz (instruções no README).
+vozes/

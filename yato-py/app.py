@@ -32,6 +32,7 @@ from cerebro import pensar, acordar, CerebroError, MODELO
 from memoria import (carregar_fatos, listar_conversas, novo_arquivo_conversa,
                      salvar_conversa_em, carregar_falas_de,
                      renomear_conversa, excluir_conversa)
+import voz
 
 # ---- Os MODOS: nomes amigáveis pra temperatura ----
 # Temperatura é o "grau de ousadia" na escolha de cada palavra — mas um
@@ -119,6 +120,7 @@ class App(ctk.CTk):
         self.fonte_atual = ""        # o que a última pesquisa trouxe (pro "continua")
         self.imagem_anexada = ""     # a imagem colada/anexada (base64), 1 por mensagem
         self.modo_view = "chat"      # "chat" ou "avatar" (o toggle do topo)
+        self.voz_ligada = False      # o Yato lê as respostas em voz alta?
 
         self._montar_tela()
 
@@ -157,6 +159,15 @@ class App(ctk.CTk):
             fg_color="transparent", border_width=1,
             command=self.nova_conversa,
         ).pack(side="right")
+
+        # Liga/desliga a VOZ (o Yato lê as respostas em voz alta). Começa
+        # desligada — o app não fala sozinho até você pedir.
+        self.botao_voz = ctk.CTkButton(
+            topo, text="🔇", width=40,
+            fg_color="transparent", border_width=1,
+            command=self._toggle_voz,
+        )
+        self.botao_voz.pack(side="right", padx=(0, 8))
 
         # O botão 📜 agora abre/fecha um PAINEL LATERAL embutido (não mais
         # uma janela extra) — e por ser embutido ele se atualiza sozinho.
@@ -265,11 +276,29 @@ class App(ctk.CTk):
 
     # ------------------------------------------------------- modo avatar
     def _montar_view_avatar(self):
-        """O 'palco' do modo avatar: o personagem + chip de expressão +
-        legenda (a última fala do Yato), no espírito do layout '1b' do design.
+        """O 'palco' do modo avatar — hoje um PNGTuber simples (uma imagem por
+        expressão), deixado SEMIPLANEJADO pra receber o avatar 2D de verdade.
 
-        Carrega as imagens de expressão que EXISTIREM em assets/. Se nenhuma
-        existir, cai num placeholder 🎭 — o app funciona sem a arte."""
+        ┌──────────────────── PONTO DE EXTENSÃO ─────────────────────┐
+        │ RUMO ESCOLHIDO: avatar Live2D numa JANELA FLUTUANTE        │
+        │ (estilo VTuber/mascote de desktop). Esqueleto: avatar2d.py │
+        │                                                            │
+        │ O 'contrato' que esse avatar vai consumir JÁ está pronto:  │
+        │  • self._expressao(nome) é chamado com um destes estados:  │
+        │      'ociosa' | 'pensando' | 'falando' | 'feliz'           │
+        │    JÁ sincronizado com a voz — fica 'falando' o tempo      │
+        │    exato do áudio. O avatar Live2D só precisa REAGIR a isso.│
+        │                                                            │
+        │ Quando for construir (ver o plano em avatar2d.py):         │
+        │  1. este método passa a criar/mostrar a janela flutuante;  │
+        │  2. _expressao() repassa o estado pro avatar2d;            │
+        │  3. o PNGTuber de imagens abaixo vira só o modo 'reserva'  │
+        │     (pra quando não houver o modelo Live2D).               │
+        └────────────────────────────────────────────────────────────┘
+
+        HOJE (reserva/PNGTuber): carrega as imagens de expressão que EXISTIREM
+        em assets/. Se nenhuma existir, cai num placeholder 🎭 — o app funciona
+        sem a arte, e sem o avatar Live2D."""
         v = self.view_avatar
 
         # Cache: uma CTkImage por expressão disponível (redimensionada).
@@ -293,20 +322,49 @@ class App(ctk.CTk):
             self.avatar_img = ctk.CTkLabel(v, text="🎭", font=ctk.CTkFont(size=96))
         self.avatar_img.pack(expand=True, pady=(12, 0))
 
+        # Andaime de DESENVOLVIMENTO: um chip discreto que mostra o estado atual
+        # (ociosa/pensando/falando/feliz). Serve pra a gente VER o gancho de
+        # expressões funcionando enquanto o avatar 2D não chega. Quando ele
+        # chegar e animar sozinho, este rótulo pode sair.
         self.rotulo_expressao = ctk.CTkLabel(
             v, text="● expressão: ociosa",
             font=ctk.CTkFont(size=12), text_color="#8a8aa0")
-        self.rotulo_expressao.pack()
-
-        # A legenda: a última fala do Yato, centralizada (como no design).
-        self.legenda_avatar = ctk.CTkLabel(
-            v, text="", wraplength=520, justify="center",
-            font=ctk.CTkFont(size=14), fg_color="#2a2a3a", corner_radius=12)
-        self.legenda_avatar.pack(fill="x", padx=30, pady=(8, 16))
+        self.rotulo_expressao.pack(pady=(0, 16))
 
     def _view_mudou(self, valor):
         """Chamado pelo toggle do topo: alterna chat ↔ avatar."""
         self.trocar_modo_view("avatar" if "Avatar" in valor else "chat")
+
+    # -------------------------------------------------------------- voz
+    def _toggle_voz(self):
+        """Liga/desliga a voz. Ao ligar, AQUECE o modelo em segundo plano
+        (carregar leva alguns segundos — como o cérebro, evita a espera na
+        1ª fala)."""
+        if not voz.disponivel():
+            self.botao_voz.configure(text="🔇")
+            self._bolha("Voz indisponível — o modelo do Piper não está na "
+                        "pasta vozes/.", autor="dica")
+            return
+        self.voz_ligada = not self.voz_ligada
+        self.botao_voz.configure(text="🔊" if self.voz_ligada else "🔇")
+        if self.voz_ligada:
+            threading.Thread(target=voz._carregar, daemon=True).start()  # aquece
+        else:
+            voz.parar()   # cala a boca na hora se desligou no meio de uma fala
+
+    def _falar(self, texto):
+        """Fala o texto numa thread (não trava a janela). Enquanto fala, o
+        avatar fica 'falando'; ao terminar, volta pra 'ociosa'."""
+        self._expressao("falando")
+
+        def tocar():
+            try:
+                voz.falar(texto)   # bloqueia esta thread até a fala acabar
+            except Exception:
+                logging.exception("Falha ao falar")
+            self.after(0, lambda: self._expressao("ociosa"))
+
+        threading.Thread(target=tocar, daemon=True).start()
 
     def trocar_modo_view(self, modo):
         """Troca a área central entre a conversa (chat) e o palco (avatar).
@@ -317,18 +375,10 @@ class App(ctk.CTk):
             self.area.pack_forget()
             self.view_avatar.pack(fill="both", expand=True, padx=12,
                                   pady=(0, 12), before=self.linha_modo)
-            self._atualizar_legenda_avatar()
         else:
             self.view_avatar.pack_forget()
             self.area.pack(fill="both", expand=True, padx=12,
                            pady=(0, 12), before=self.linha_modo)
-
-    def _atualizar_legenda_avatar(self):
-        """Põe a última fala do Yato na legenda do palco."""
-        ultima = next((m["content"] for m in reversed(self.mensagens)
-                       if m["role"] == "assistant"), None)
-        self.legenda_avatar.configure(
-            text=limpar_markdown(ultima) if ultima else "Manda um \"oi\" pro Yato…")
 
     def _expressao(self, nome):
         """Troca a expressão do avatar: o chip de texto E a imagem (se houver
@@ -598,6 +648,9 @@ class App(ctk.CTk):
             # só imagem, sem pergunta? Usa a pergunta padrão.
             texto = "O que você vê nesta imagem?"
 
+        if self.voz_ligada:
+            voz.parar()   # nova pergunta = corta a fala anterior
+
         # A imagem desta mensagem (se houver) — capturada AGORA e removida
         # do campo: cada anexo vale pra UMA mensagem.
         imagem = self.imagem_anexada
@@ -709,10 +762,13 @@ class App(ctk.CTk):
         self.mensagens.append({"role": "assistant", "content": texto})
         self._salvar()   # cada troca completa vai pro disco (na conversa atual)
         self._atualizar_lista_conversas()   # a conversa nova/atualizada aparece no painel
-        # O avatar "fala" e depois volta a ficar ocioso.
-        self._atualizar_legenda_avatar()
-        self._expressao("falando")
-        self.after(2500, lambda: self._expressao("ociosa"))
+        # Com a voz LIGADA, o Yato lê a resposta e a expressão fica 'falando'
+        # até o áudio acabar. Sem voz, o avatar só "abre a boca" por 2,5s.
+        if self.voz_ligada and texto:
+            self._falar(texto)
+        else:
+            self._expressao("falando")
+            self.after(2500, lambda: self._expressao("ociosa"))
         self.botao.configure(state="normal", text="Enviar")
         self._rolar_pro_fim()
         self.entrada.focus()

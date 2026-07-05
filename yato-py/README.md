@@ -19,9 +19,10 @@ cerebro.py  ──HTTP──►  Ollama em http://localhost:11434  ──►  mo
    │
 personalidade.py  (o texto que diz QUEM o Yato é)
 memoria.py        (salvar/carregar a conversa no disco)
+voz.py            (fala as respostas em voz alta — Piper, offline)
 ```
 
-Cinco arquivos, cinco responsabilidades separadas — assim cada parte é
+Cada arquivo tem uma responsabilidade separada — assim cada parte é
 fácil de entender e mudar sozinha:
 
 | Arquivo             | Responsabilidade                                            |
@@ -31,6 +32,7 @@ fácil de entender e mudar sozinha:
 | `ferramentas.py`    | As "mãos": a busca na web que o Python executa quando o modelo pede. |
 | `memoria.py`        | Persistência: o histórico de conversas (`conversas/`) e os fatos sobre você (`fatos.json`). |
 | `app.py`            | A janela (CustomTkinter). Só tela; pede pro `cerebro` pensar.|
+| `voz.py`            | A voz: transforma a resposta em áudio (Piper) e toca — offline. |
 
 Essa divisão é de propósito: dá pra testar o `cerebro.py` sozinho (sem abrir a
 janela) e, no futuro, trocar o Ollama por outra coisa mexendo só num lugar.
@@ -252,6 +254,35 @@ que lembra. É como a memória de qualquer assistente de IA funciona.
 
 Bônus de usabilidade: **botão direito em qualquer balão copia o texto** 📋.
 
+## O Yato fala 🔊
+
+O Yato **lê as respostas em voz alta** — 100% offline, com o **Piper** (um
+TTS que roda na CPU). Voz masculina em pt-BR (`faber-medium`).
+
+- O botão **🔇 / 🔊** no topo liga/desliga. **Começa desligado** de
+  propósito: ele não fala sem você pedir.
+- Ao **ligar**, o modelo de voz (~60 MB) é *aquecido* em segundo plano —
+  como o cérebro, pra a 1ª fala não travar. Import preguiçoso: quem nunca
+  liga a voz não paga esse custo ao abrir.
+- **Emojis não são falados** (limpos antes) — ele não diz "carinha piscando".
+- Uma **nova mensagem corta** a fala anterior na hora.
+- O áudio toca com o `winsound` (embutido no Windows — zero dependência a mais).
+
+O modelo de voz fica em `vozes/` e está no `.gitignore` (é baixável, como o
+modelo do Ollama). Pra ter voz, baixe o `pt_BR-faber-medium` do repositório
+`rhasspy/piper-voices` (no Hugging Face) — os **dois** arquivos
+(`pt_BR-faber-medium.onnx` e `.onnx.json`) — e ponha em `vozes/`. Sem eles, o
+botão avisa e o resto do app funciona normal.
+
+### O modo Avatar 🎭 (preparando o terreno)
+
+O topo tem um seletor **Chat ↔ Avatar**. No modo Avatar, o Yato ganha um
+palco central e um indicador de expressão que **acompanha a voz**: enquanto
+ele fala, o estado fica `falando` pelo **tempo exato do áudio** — a base do
+*lip-sync*. Hoje é uma imagem estática (PNGTuber simples); o `avatar2d.py`
+guarda o **plano do avatar Live2D** numa janela flutuante (o "chefão" da
+próxima rodada). O motor de estados já está pronto pra recebê-lo.
+
 ## Se algo der errado
 
 - O Yato responde com mensagens diferentes pra cada problema: Ollama fechado,
@@ -329,8 +360,26 @@ O projeto evolui em **rodadas** — cada uma vira um commit com nome claro.
       botão 📜 pra listar e reabrir, teto de 10 (rotação da mais antiga),
       migração automática do `conversa.json` antigo
 
-### 📋 Rodada 8 — Voz 🎤
-- [ ] Ouvir (Whisper local) e falar (Piper, voz pt-BR) — tudo offline
+### ✅ Redesign visual + modo Avatar + recorte de fundo
+- [x] Cara nova da janela (identidade roxa) e seletor **Chat ↔ Avatar**
+- [x] Painel de histórico embutido (adeus janela extra, some o bug de não-atualizar)
+- [x] Recortar o fundo de imagens com o **rembg** local (`fundo.py`),
+      no chat e por detecção determinística
+
+### ✅ Rodada 8 — Voz 🔊
+- [x] **Falar** com o Piper (voz pt-BR `faber-medium`, offline, na CPU):
+      botão 🔇/🔊 no topo, começa desligado, aquece ao ligar, emojis fora,
+      nova mensagem corta a fala
+- [x] Modo **Avatar** com palco central e expressão sincronizada com a voz
+      (`falando` dura o tempo exato do áudio — a base do lip-sync)
+- [x] Esqueleto `avatar2d.py`: o plano do avatar Live2D em janela flutuante
+- [ ] **Ouvir** (Whisper local) — a outra metade da voz, pra uma próxima rodada
+
+### 📋 Rodada 9 — Avatar 2D (Live2D) 🎭
+- [ ] Riggar o Yato: a arte em camadas (cabelo, olhos, boca...) no Live2D Cubism
+- [ ] Janela flutuante (`pywebview`) renderizando o modelo (`pixi-live2d-display`)
+- [ ] Lip-sync de verdade: a boca acompanha a força do áudio da voz
+- [ ] Ponte com o motor de expressões que a Rodada 8 já deixou pronto
 
 ### 💡 Depois (sem número ainda)
 - [ ] Mais ferramentas (clima, lembretes, ler arquivos...)
