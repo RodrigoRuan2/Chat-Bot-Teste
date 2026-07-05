@@ -52,6 +52,18 @@ DICAS_MODO = {
     "🎭 Lúdico": "histórias e zoeira — não confie em fatos aqui!",
 }
 
+# ---- A arte do avatar (modo avatar) ----
+# Cada "expressão" é um PNG de fundo transparente na pasta assets/. Por ora
+# só existe a "ociosa"; as outras são carregadas SE o arquivo existir — o
+# código já está pronto pra elas (é só criar a arte e salvar com esse nome).
+PASTA_ASSETS = Path(__file__).with_name("assets")
+IMAGENS_EXPRESSAO = {
+    "ociosa":   "yato_ociosa.png",
+    "pensando": "yato_pensando.png",
+    "falando":  "yato_falando.png",
+    "feliz":    "yato_feliz.png",
+}
+
 # ---- Diário de bordo (yato.log, criado ao lado deste arquivo) ----
 # Por que existe: aberto pelo atalho (pythonw), o app NÃO tem terminal —
 # qualquer erro sumiria sem deixar rastro. Aqui, tudo fica registrado.
@@ -106,6 +118,7 @@ class App(ctk.CTk):
         self.texto_parcial = ""      # o que já chegou da resposta atual
         self.fonte_atual = ""        # o que a última pesquisa trouxe (pro "continua")
         self.imagem_anexada = ""     # a imagem colada/anexada (base64), 1 por mensagem
+        self.modo_view = "chat"      # "chat" ou "avatar" (o toggle do topo)
 
         self._montar_tela()
 
@@ -121,10 +134,23 @@ class App(ctk.CTk):
         topo.pack(fill="x", padx=12, pady=(12, 6))
 
         ctk.CTkLabel(
-            topo,
-            text=f"⚔️  Yato  ·  {MODELO}",
+            topo, text="⚔️  Yato",
             font=ctk.CTkFont(size=16, weight="bold"),
         ).pack(side="left")
+
+        # O modelo num "badge" discreto ao lado do nome (refinamento do design).
+        ctk.CTkLabel(
+            topo, text=f" {MODELO} ", font=ctk.CTkFont(size=11),
+            text_color="#9a9ab0", fg_color="#242430", corner_radius=6,
+        ).pack(side="left", padx=(8, 0))
+
+        # O TOGGLE Chatbot / Avatar (a fundação dos dois modos de visualização).
+        self.toggle_view = ctk.CTkSegmentedButton(
+            topo, values=["💬 Chat", "🎭 Avatar"],
+            command=self._view_mudou, width=150,
+        )
+        self.toggle_view.set("💬 Chat")
+        self.toggle_view.pack(side="left", padx=(14, 0))
 
         ctk.CTkButton(
             topo, text="🧹 Nova", width=64,
@@ -173,13 +199,21 @@ class App(ctk.CTk):
         self.principal = ctk.CTkFrame(corpo, fg_color="transparent")
         self.principal.pack(side="left", fill="both", expand=True)
 
-        # Área das mensagens: um quadro que ROLA sozinho quando enche.
+        # ---- A área que TROCA entre os dois modos de visualização ----
+        # Modo CHAT: a área de mensagens (rola sozinha). Começa visível.
         self.area = ctk.CTkScrollableFrame(self.principal)
         self.area.pack(fill="both", expand=True, padx=12, pady=(0, 12))
 
+        # Modo AVATAR: o "palco" do personagem (placeholder por enquanto — a
+        # arte e a voz entram numa rodada futura). Criado agora, mas oculto.
+        self.view_avatar = ctk.CTkFrame(self.principal, fg_color="#12121a")
+        self._montar_view_avatar()
+
         # ---- O seletor de MODO (a temperatura com nome de gente) ----
-        linha_modo = ctk.CTkFrame(self.principal, fg_color="transparent")
-        linha_modo.pack(fill="x", padx=14, pady=(0, 4))
+        # Guardado em self.* porque o toggle usa ele como âncora (before=).
+        self.linha_modo = ctk.CTkFrame(self.principal, fg_color="transparent")
+        self.linha_modo.pack(fill="x", padx=14, pady=(0, 4))
+        linha_modo = self.linha_modo
 
         ctk.CTkLabel(linha_modo, text="Modo:", font=ctk.CTkFont(size=12)).pack(side="left")
 
@@ -228,6 +262,83 @@ class App(ctk.CTk):
 
         self._redesenhar_conversa()
         self.entrada.focus()
+
+    # ------------------------------------------------------- modo avatar
+    def _montar_view_avatar(self):
+        """O 'palco' do modo avatar: o personagem + chip de expressão +
+        legenda (a última fala do Yato), no espírito do layout '1b' do design.
+
+        Carrega as imagens de expressão que EXISTIREM em assets/. Se nenhuma
+        existir, cai num placeholder 🎭 — o app funciona sem a arte."""
+        v = self.view_avatar
+
+        # Cache: uma CTkImage por expressão disponível (redimensionada).
+        self.imgs_expressao = {}
+        for nome, arquivo in IMAGENS_EXPRESSAO.items():
+            caminho = PASTA_ASSETS / arquivo
+            if caminho.exists():
+                try:
+                    img = Image.open(caminho)
+                    altura = 400
+                    largura = int(img.width * altura / img.height)
+                    self.imgs_expressao[nome] = ctk.CTkImage(
+                        light_image=img, dark_image=img, size=(largura, altura))
+                except Exception:
+                    logging.exception("Falha ao carregar a arte %s", arquivo)
+
+        if self.imgs_expressao:
+            self.avatar_img = ctk.CTkLabel(
+                v, text="", image=self.imgs_expressao.get("ociosa"))
+        else:
+            self.avatar_img = ctk.CTkLabel(v, text="🎭", font=ctk.CTkFont(size=96))
+        self.avatar_img.pack(expand=True, pady=(12, 0))
+
+        self.rotulo_expressao = ctk.CTkLabel(
+            v, text="● expressão: ociosa",
+            font=ctk.CTkFont(size=12), text_color="#8a8aa0")
+        self.rotulo_expressao.pack()
+
+        # A legenda: a última fala do Yato, centralizada (como no design).
+        self.legenda_avatar = ctk.CTkLabel(
+            v, text="", wraplength=520, justify="center",
+            font=ctk.CTkFont(size=14), fg_color="#2a2a3a", corner_radius=12)
+        self.legenda_avatar.pack(fill="x", padx=30, pady=(8, 16))
+
+    def _view_mudou(self, valor):
+        """Chamado pelo toggle do topo: alterna chat ↔ avatar."""
+        self.trocar_modo_view("avatar" if "Avatar" in valor else "chat")
+
+    def trocar_modo_view(self, modo):
+        """Troca a área central entre a conversa (chat) e o palco (avatar).
+        A barra de digitação e o seletor de modo ficam embaixo nos DOIS —
+        são compartilhados; muda só o que aparece em cima."""
+        self.modo_view = modo
+        if modo == "avatar":
+            self.area.pack_forget()
+            self.view_avatar.pack(fill="both", expand=True, padx=12,
+                                  pady=(0, 12), before=self.linha_modo)
+            self._atualizar_legenda_avatar()
+        else:
+            self.view_avatar.pack_forget()
+            self.area.pack(fill="both", expand=True, padx=12,
+                           pady=(0, 12), before=self.linha_modo)
+
+    def _atualizar_legenda_avatar(self):
+        """Põe a última fala do Yato na legenda do palco."""
+        ultima = next((m["content"] for m in reversed(self.mensagens)
+                       if m["role"] == "assistant"), None)
+        self.legenda_avatar.configure(
+            text=limpar_markdown(ultima) if ultima else "Manda um \"oi\" pro Yato…")
+
+    def _expressao(self, nome):
+        """Troca a expressão do avatar: o chip de texto E a imagem (se houver
+        arte pra essa expressão; senão mantém a ociosa como reserva)."""
+        if getattr(self, "rotulo_expressao", None):
+            self.rotulo_expressao.configure(text=f"● expressão: {nome}")
+        imgs = getattr(self, "imgs_expressao", {})
+        img = imgs.get(nome) or imgs.get("ociosa")
+        if img and getattr(self, "avatar_img", None):
+            self.avatar_img.configure(image=img)
 
     def _redesenhar_conversa(self):
         """Limpa a área e redesenha as bolhas a partir de self.mensagens.
@@ -509,6 +620,7 @@ class App(ctk.CTk):
         #    O modo é lido AGORA e traduzido pra temperatura — cada
         #    mensagem pode ir com um modo diferente.
         temperatura = MODOS[self.seletor_modo.get()]
+        self._expressao("pensando")   # o avatar reage (se estiver no modo avatar)
         threading.Thread(
             target=self._buscar_resposta, args=(temperatura, imagem), daemon=True
         ).start()
@@ -597,6 +709,10 @@ class App(ctk.CTk):
         self.mensagens.append({"role": "assistant", "content": texto})
         self._salvar()   # cada troca completa vai pro disco (na conversa atual)
         self._atualizar_lista_conversas()   # a conversa nova/atualizada aparece no painel
+        # O avatar "fala" e depois volta a ficar ocioso.
+        self._atualizar_legenda_avatar()
+        self._expressao("falando")
+        self.after(2500, lambda: self._expressao("ociosa"))
         self.botao.configure(state="normal", text="Enviar")
         self._rolar_pro_fim()
         self.entrada.focus()
