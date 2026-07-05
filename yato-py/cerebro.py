@@ -123,6 +123,23 @@ def _promessa_vazia(texto):
     return len(texto) < 220 and bool(_PROMESSA_VAZIA.search(texto))
 
 
+# Detecta "remove o fundo desta imagem" e afins. Por quê no código: com uma
+# imagem anexada, o 7B não chama a ferramenta remover_fundo de forma
+# confiável (dá teatro e pede pra anexar de novo). Se o usuário pediu, o
+# código executa direto — sem depender da (falha) iniciativa do modelo.
+_REMOVER_FUNDO = re.compile(
+    r"\b(remov\w+|tir\w+|retir\w+|recort\w+|apag\w+)\b[^.!?\n]{0,25}\bfundo\b"
+    r"|\bfundo\b[^.!?\n]{0,25}\b(transparente|remov\w+|tir\w+|fora)\b"
+    r"|\b(deixa\w*|deixe|dar)\b[^.!?\n]{0,20}\btransparente\b"
+    r"|\bsem\s+fundo\b|\brecort\w+\b",
+    re.IGNORECASE,
+)
+
+
+def _quer_remover_fundo(texto):
+    return bool(_REMOVER_FUNDO.search(texto or ""))
+
+
 def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar=None,
            fonte_anterior=None, imagem=None):
     """Manda a conversa pro Ollama e devolve uma Resposta (texto + métricas).
@@ -150,6 +167,8 @@ def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar
     olhadas_feitas = 0
     empurrao_dado = False   # o "anti-teatro" só empurra UMA vez, pra não virar loop
     coletado = []   # tudo que as ferramentas trouxerem nesta pensada
+    ferramentas_ativas = FERRAMENTAS   # pode ser podada abaixo (ex.: após já
+    #                                    remover o fundo, tiramos remover_fundo)
 
     # ---- Complementos dinâmicos do system prompt ----
     # 1) A data: o modelo NÃO sabe que dia é hoje (treino tem data de corte).
@@ -172,37 +191,52 @@ def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar
             "acompanhamento SEM inventar. Se não bastar, busque de novo.\n"
             + fonte_anterior
         )
-    # 4) A imagem anexada: OLHADA AUTOMÁTICA. Testamos pedir pro modelo
-    #    chamar ver_imagem sozinho — ele ignorou o aviso (a eterna falta de
-    #    iniciativa do 7B). Doutrina da casa: etapa não-confiável vira
-    #    código. Anexou imagem = quer que ele veja; o olho roda JÁ, e a
-    #    descrição entra pronta no prompt. A ferramenta segue disponível
-    #    pra segundas olhadas com outra pergunta.
+    # 4) A imagem anexada — DUAS intenções, resolvidas no CÓDIGO (o 7B não
+    #    aciona a ferramenta certa de forma confiável):
+    #    - pediu pra "remover o fundo" → fazemos DIRETO (dava teatro antes);
+    #    - qualquer outra coisa → OLHADA automática (descreve a imagem).
+    #    Doutrina da casa: etapa não-confiável vira código determinístico.
     if imagem:
-        if ao_buscar:
-            ao_buscar("👁️ olhando a imagem anexada")
         pergunta_usuario = next(
             (m["content"] for m in reversed(conversa) if m["role"] == "user"), "")
-        visto = executar("ver_imagem", {
-            # O qwen2.5vl é um leitor LITERAL: se pedir só "descreva", ele
-            # transcreve o texto e ignora o resto. Por isso a pergunta exige
-            # as DUAS coisas, numeradas.
-            "pergunta": ("Responda em duas partes: "
-                         "1) DESCRIÇÃO: tudo que aparece na imagem — objetos, "
-                         "pessoas, formas, cores, layout. "
-                         "2) TEXTO: transcrição fiel de todo texto visível. "
-                         "Pergunta do usuário sobre a imagem: "
-                         + pergunta_usuario),
-            "imagem_b64": imagem,
-        })
-        olhadas_feitas += 1
-        coletado.append("O QUE A IMAGEM ANEXADA CONTÉM (via ver_imagem):\n" + visto)
-        extra += (
-            "\n\n=== O QUE HÁ NA IMAGEM ANEXADA (já vista pela ferramenta "
-            "ver_imagem) ===\n" + visto +
-            "\n(Responda ao usuário com base nesta descrição — ela é "
-            "confiável. Precisa de OUTRO detalhe? Chame ver_imagem de novo.)"
-        )
+
+        if _quer_remover_fundo(pergunta_usuario):
+            if ao_buscar:
+                ao_buscar("✂️ removendo o fundo da imagem")
+            resultado = executar("remover_fundo", {"imagem_b64": imagem})
+            coletado.append(resultado)
+            # já removemos: some com a ferramenta pra o modelo não repetir
+            # (senão ele chama de novo e salva um 2º arquivo — visto no teste).
+            ferramentas_ativas = [f for f in FERRAMENTAS
+                                  if f["function"]["name"] != "remover_fundo"]
+            extra += (
+                "\n\n=== O FUNDO DA IMAGEM ANEXADA JÁ FOI REMOVIDO (feito!) ===\n"
+                + resultado +
+                "\n(Avise o usuário do resultado acima — o arquivo JÁ está "
+                "salvo. NUNCA peça pra ele anexar a imagem de novo.)")
+        else:
+            if ao_buscar:
+                ao_buscar("👁️ olhando a imagem anexada")
+            visto = executar("ver_imagem", {
+                # O qwen2.5vl é um leitor LITERAL: se pedir só "descreva", ele
+                # transcreve o texto e ignora o resto. Por isso a pergunta
+                # exige as DUAS coisas, numeradas.
+                "pergunta": ("Responda em duas partes: "
+                             "1) DESCRIÇÃO: tudo que aparece na imagem — objetos, "
+                             "pessoas, formas, cores, layout. "
+                             "2) TEXTO: transcrição fiel de todo texto visível. "
+                             "Pergunta do usuário sobre a imagem: "
+                             + pergunta_usuario),
+                "imagem_b64": imagem,
+            })
+            olhadas_feitas += 1
+            coletado.append("O QUE A IMAGEM ANEXADA CONTÉM (via ver_imagem):\n" + visto)
+            extra += (
+                "\n\n=== O QUE HÁ NA IMAGEM ANEXADA (já vista pela ferramenta "
+                "ver_imagem) ===\n" + visto +
+                "\n(Responda ao usuário com base nesta descrição — ela é "
+                "confiável. Precisa de OUTRO detalhe? Chame ver_imagem de novo.)"
+            )
     conversa = [
         {**m, "content": m["content"] + extra} if m["role"] == "system" else m
         for m in conversa
@@ -222,7 +256,7 @@ def pensar(mensagens, temperatura=TEMPERATURA_PADRAO, ao_receber=None, ao_buscar
                     # a geração palavra-a-palavra ficando visível.
                     "stream": True,
                     "messages": conversa,
-                    "tools": FERRAMENTAS,   # a lista de ferramentas disponíveis
+                    "tools": ferramentas_ativas,   # ferramentas disponíveis
                     # Mantém o modelo carregado por 10 min após a última
                     # conversa — sem isso, cada mensagem pagaria a carga (~20s).
                     "keep_alive": "10m",

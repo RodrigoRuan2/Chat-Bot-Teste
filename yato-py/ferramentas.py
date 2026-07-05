@@ -12,13 +12,18 @@ Cada ferramenta tem duas partes:
      usar a ferramenta na hora certa — nem demais, nem de menos.
 """
 
+import base64
+import io
 import logging
+from datetime import datetime
 
 import requests
 from bs4 import BeautifulSoup
 from ddgs import DDGS
+from PIL import Image
 
 from memoria import anotar_fato, esquecer_fato
+from fundo import remover_fundo_pil, area_de_trabalho
 
 # Teto de texto devolvido por página lida. Por quê: a "mesa" do modelo tem
 # 8192 tokens no total — uma página inteira de portal facilmente passa disso
@@ -189,6 +194,28 @@ def ver_imagem(pergunta, imagem_b64=None):
                 f"modelo de visão '{MODELO_VISAO}' não está baixado.)")
 
 
+def remover_fundo(imagem_b64=None):
+    """Remove o fundo da imagem ANEXADA e salva um PNG transparente.
+
+    Como a ver_imagem, a imagem entra POR FORA (o app injeta o imagem_b64);
+    o modelo só decide chamar. Salva na Área de Trabalho e devolve o caminho
+    pra o Yato avisar o usuário.
+    """
+    if not imagem_b64:
+        return ("(Não há imagem anexada. Peça pro usuário colar (Ctrl+V) ou "
+                "anexar (📎) a imagem cujo fundo ele quer remover.)")
+    try:
+        img = Image.open(io.BytesIO(base64.b64decode(imagem_b64)))
+        sem_fundo = remover_fundo_pil(img)
+        destino = area_de_trabalho() / f"yato_sem_fundo_{datetime.now():%Y%m%d-%H%M%S}.png"
+        sem_fundo.save(destino)
+        return f"(Fundo removido! Salvei o PNG transparente em: {destino})"
+    except Exception as erro:
+        logging.exception("Falha ao remover fundo: %s", erro)
+        return ("(Não consegui remover o fundo — ou a imagem é inválida, ou o "
+                "rembg não está instalado (pip install rembg onnxruntime).)")
+
+
 # A ficha técnica, no formato padrão (JSON Schema) que a API entende.
 # É ISTO que o modelo lê a cada mensagem pra decidir se busca ou não.
 FERRAMENTAS = [
@@ -238,6 +265,19 @@ FERRAMENTAS = [
                 },
                 "required": ["url"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remover_fundo",
+            "description": (
+                "Remove o fundo da IMAGEM ANEXADA e salva um PNG com fundo "
+                "transparente. Use quando o usuário pedir pra 'tirar o fundo', "
+                "'remover o fundo', 'deixar transparente' ou 'recortar' uma "
+                "imagem que ele anexou. Só funciona se houver imagem anexada."
+            ),
+            "parameters": {"type": "object", "properties": {}},
         },
     },
     {
@@ -321,6 +361,7 @@ _EXECUTORES = {
     "anotar_fato": anotar_fato,
     "esquecer_fato": esquecer_fato,
     "ver_imagem": ver_imagem,
+    "remover_fundo": remover_fundo,
 }
 
 # Quais ferramentas VÃO À WEB (pro contador da etiqueta e pra "fonte").
@@ -328,7 +369,7 @@ _EXECUTORES = {
 FERRAMENTAS_WEB = {"buscar_web", "ler_pagina"}
 
 # Quais ferramentas precisam da IMAGEM anexada (o cérebro injeta por fora).
-FERRAMENTAS_IMAGEM = {"ver_imagem"}
+FERRAMENTAS_IMAGEM = {"ver_imagem", "remover_fundo"}
 
 
 def descrever(nome, argumentos):
@@ -340,6 +381,8 @@ def descrever(nome, argumentos):
         return f"🔍 lendo a página: {argumentos.get('url', '?')[:60]}"
     if nome == "ver_imagem":
         return f"👁️ olhando a imagem: {argumentos.get('pergunta', '?')[:50]}"
+    if nome == "remover_fundo":
+        return "✂️ removendo o fundo da imagem"
     if nome == "anotar_fato":
         return f"📌 anotando: {argumentos.get('fato', '?')[:60]}"
     if nome == "esquecer_fato":
