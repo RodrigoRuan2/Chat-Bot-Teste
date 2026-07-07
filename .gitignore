@@ -1,6 +1,6 @@
-# Instruções locais do Claude Code — nunca vão pro repositório
+# Configs da ferramenta Claude Code — são da MÁQUINA, não do projeto
 CLAUDE.md
-.claude/settings.local.json
+.claude/
 
 # Lixo de sistema operacional
 Thumbs.db

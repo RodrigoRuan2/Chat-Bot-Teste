@@ -68,6 +68,22 @@ Se algum dia precisar reinstalar as bibliotecas:
 pip install -r requirements.txt
 ```
 
+### O que fica FORA do repositório (`.gitignore`)
+
+Algumas coisas são da **sua máquina**, não do projeto — ficam no `.gitignore`
+pra nunca subir pro GitHub:
+
+- **`.claude/`** — se você usa o **Claude Code** pra desenvolver, ele cria essa
+  pasta com configs da própria ferramenta (atalhos de preview, preferências).
+  É pessoal, não faz parte do Yato. Se um dia ela aparecer no `git status`, é
+  sinal de que escapou — garanta a linha `.claude/` no `.gitignore` **da raiz**.
+- **`CLAUDE.md`** (instruções locais), **`vozes/`** (modelos de voz, baixáveis),
+  **`conversas/`** e **`fatos.json`** (seus dados), **`.venv/`**, **`*.log`** —
+  cada um pelo seu motivo: config pessoal, arquivo pesado, dado privado, ambiente.
+
+Regra geral: **config de ferramenta e dado pessoal não vão pro repositório** —
+só o código do projeto.
+
 ### Testar só o cérebro (sem janela)
 
 Pra confirmar que o Ollama está respondendo, sem abrir a interface:
