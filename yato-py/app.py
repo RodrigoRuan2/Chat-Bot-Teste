@@ -33,6 +33,7 @@ from memoria import (carregar_fatos, listar_conversas, novo_arquivo_conversa,
                      salvar_conversa_em, carregar_falas_de,
                      renomear_conversa, excluir_conversa)
 import voz
+import ouvido
 import avatar2d
 
 # ---- Os MODOS: nomes amigáveis pra temperatura ----
@@ -110,6 +111,7 @@ class App(ctk.CTk):
         self.imagem_anexada = ""     # a imagem colada/anexada (base64), 1 por mensagem
         self.modo_view = "chat"      # "chat" ou "avatar" (o toggle do topo)
         self.voz_ligada = False      # o Yato lê as respostas em voz alta?
+        self.ouvindo = False         # o microfone está gravando agora?
 
         self._montar_tela()
 
@@ -157,6 +159,15 @@ class App(ctk.CTk):
             command=self._toggle_voz,
         )
         self.botao_voz.pack(side="right", padx=(0, 8))
+
+        # O MICROFONE: grava sua fala, transcreve (Whisper local) e envia
+        # direto. Clica pra gravar, clica de novo pra mandar.
+        self.botao_ouvir = ctk.CTkButton(
+            topo, text="🎤", width=40,
+            fg_color="transparent", border_width=1,
+            command=self._toggle_ouvir,
+        )
+        self.botao_ouvir.pack(side="right", padx=(0, 8))
 
         # O botão 📜 agora abre/fecha um PAINEL LATERAL embutido (não mais
         # uma janela extra) — e por ser embutido ele se atualiza sozinho.
@@ -282,6 +293,43 @@ class App(ctk.CTk):
             voz.parar()   # cala a boca na hora se desligou no meio de uma fala
             if self.modo_view == "avatar":
                 avatar2d.lip_sync(0.0)   # e fecha a boca do avatar
+
+    # ------------------------------------------------------------- ouvir
+    def _toggle_ouvir(self):
+        """O microfone: 1º clique começa a gravar; 2º clique para, transcreve
+        (Whisper local, numa thread) e envia a mensagem direto."""
+        if not ouvido.disponivel():
+            self._bolha("Ouvir indisponível — faltam as libs (faster-whisper, "
+                        "sounddevice). Rode o preparar.py.", autor="dica")
+            return
+        if not self.ouvindo:
+            self.ouvindo = True
+            self.botao_ouvir.configure(text="🔴", fg_color="#c0392b")
+            ouvido.iniciar()
+        else:
+            self.ouvindo = False
+            self.botao_ouvir.configure(text="⏳", fg_color="transparent")
+
+            def transcrever():
+                try:
+                    texto = ouvido.parar_e_transcrever()
+                except Exception:
+                    logging.exception("Falha ao transcrever")
+                    texto = ""
+                self.after(0, lambda: self._fala_transcrita(texto))
+
+            threading.Thread(target=transcrever, daemon=True).start()
+
+    def _fala_transcrita(self, texto):
+        """Recebe o texto do que você disse: joga no campo e ENVIA direto."""
+        self.botao_ouvir.configure(text="🎤", fg_color="transparent")
+        if not texto:
+            self._bolha("Não entendi o áudio — tenta de novo, mais perto do "
+                        "microfone.", autor="dica")
+            return
+        self.entrada.delete(0, "end")
+        self.entrada.insert(0, texto)
+        self.enviar()
 
     def _falar(self, texto):
         """Fala o texto numa thread (não trava a janela). Com o avatar aberto,

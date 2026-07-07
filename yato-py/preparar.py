@@ -43,7 +43,7 @@ def _python_do_venv():
 
 
 def passo_venv():
-    print("\n[1/3] Ambiente virtual + bibliotecas")
+    print("\n[1/4] Ambiente virtual + bibliotecas")
     if VENV.exists():
         print("  .venv já existe — ok")
     else:
@@ -53,6 +53,23 @@ def passo_venv():
     subprocess.run([str(_python_do_venv()), "-m", "pip", "install", "-q",
                     "-r", str(RAIZ / "requirements.txt")], check=True)
     print("  bibliotecas prontas  OK")
+    _desbloquear_dlls()
+
+
+def _desbloquear_dlls():
+    """Tira a marca 'baixado da internet' das DLLs das libs. Sem isso, o
+    Controle de Aplicativo/SmartScreen do Windows pode bloquear alguma — foi o
+    que aconteceu com o PyAV (do Whisper). Só no Windows; falhas são ignoradas."""
+    if sys.platform != "win32":
+        return
+    libs = VENV / "Lib" / "site-packages"
+    print("  desbloqueando as DLLs (Windows) ...")
+    subprocess.run(
+        ["powershell", "-NoProfile", "-Command",
+         f"Get-ChildItem -LiteralPath '{libs}' -Recurse -File "
+         "-Include *.dll,*.pyd | Unblock-File -ErrorAction SilentlyContinue"],
+        check=False,
+    )
 
 
 def _progresso(nome):
@@ -65,7 +82,7 @@ def _progresso(nome):
 
 
 def passo_voz():
-    print("\n[2/3] Voz do Piper (pt-BR, faber)")
+    print("\n[2/4] Voz do Piper (pt-BR, faber)")
     PASTA_VOZES.mkdir(exist_ok=True)
     for nome in ARQUIVOS_VOZ:
         destino = PASTA_VOZES / nome
@@ -77,8 +94,20 @@ def passo_voz():
     print("  voz pronta  OK")
 
 
+def passo_whisper():
+    print("\n[3/4] Reconhecimento de voz (Whisper small)")
+    print("  baixando o modelo (~460 MB na 1ª vez) ...")
+    subprocess.run(
+        [str(_python_do_venv()), "-c",
+         "from faster_whisper import WhisperModel; "
+         "WhisperModel('small', device='cpu', compute_type='int8')"],
+        check=True,
+    )
+    print("  reconhecimento pronto  OK")
+
+
 def passo_ollama():
-    print("\n[3/3] Cérebro (Ollama)")
+    print("\n[4/4] Cérebro (Ollama)")
     if shutil.which("ollama") is None:
         print("  !! Ollama NÃO encontrado.")
         print("     Instale em https://ollama.com/download e depois rode:")
@@ -94,6 +123,7 @@ def main():
     try:
         passo_venv()
         passo_voz()
+        passo_whisper()
         passo_ollama()
     except subprocess.CalledProcessError as e:
         print(f"\n!! Um passo falhou: {e}")

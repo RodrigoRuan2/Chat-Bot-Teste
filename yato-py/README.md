@@ -435,7 +435,7 @@ O projeto evolui em **rodadas** — cada uma vira um commit com nome claro.
 - [x] Modo **Avatar** com palco central e expressão sincronizada com a voz
       (`falando` dura o tempo exato do áudio — a base do lip-sync)
 - [x] Esqueleto `avatar2d.py`: o plano do avatar Live2D em janela flutuante
-- [ ] **Ouvir** (Whisper local) — a outra metade da voz, pra uma próxima rodada
+- [x] **Ouvir** (Whisper local) — feito na Rodada 10 👇
 
 ### ✅ Rodada 9 — Avatar 2D flutuante (Live2D) 🎭
 - [x] Janela flutuante (`pywebview`) renderizando Live2D (`pixi-live2d-display`
@@ -450,8 +450,16 @@ O projeto evolui em **rodadas** — cada uma vira um commit com nome claro.
       não rola no WebView2/Win11) + mascote sem-moldura, arrastável, com ✕/ESC
 - [x] Integrado ao toggle **Chat/Avatar** (o palco de imagem estática se aposentou)
 - [ ] Baixar libs + modelo pra local (voltar a ser offline de verdade)
-- [ ] O grande final: **riggar o próprio Yato** (arte em camadas no Live2D Cubism)
-      pra ele entrar no lugar dos modelos de teste (Natori/Mao)
+- [ ] O grande final: **riggar o próprio Yato** — agora em **Inochi2D** (gratuito
+      e sem limites), pra ele entrar no lugar dos manequins (Natori/Mao)
+
+### ✅ Rodada 10 — o Yato ouve 🎤
+- [x] `ouvido.py`: grava o microfone (`sounddevice`, 16 kHz) e transcreve com o
+      **Whisper** (`faster-whisper`, modelo *small*, na CPU — sem disputar a VRAM
+      com o Ollama). Import preguiçoso.
+- [x] Botão 🎤 no topo: 1º clique grava, 2º clique transcreve e **envia direto**
+- [x] `preparar.py` pré-baixa o modelo do Whisper e **desbloqueia as DLLs** (o
+      Windows barrava o PyAV — "Controle de Aplicativo")
 
 ### 💡 Depois (sem número ainda)
 - [ ] Mais ferramentas (clima, lembretes, ler arquivos...)
