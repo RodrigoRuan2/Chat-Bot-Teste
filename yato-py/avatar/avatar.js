@@ -1,16 +1,11 @@
-// avatar.js — carrega modelos Live2D de teste e deixa VOCÊ trocar entre eles
-// por um seletor, pra achar o que combina com o Yato. (Fase de exploração.)
+// avatar.js — carrega o avatar Live2D do Yato e faz a boca dele mexer (lip-sync).
 
-// Os modelos de teste (do repositório oficial CubismWebSamples da Live2D).
-// Ficaram só os dois que combinaram com o palco/enquadramento do Yato. São
-// MANEQUINS de desenvolvimento — o Yato riggado entra aqui no futuro.
-const BASE =
-  "https://cdn.jsdelivr.net/gh/Live2D/CubismWebSamples@develop/Samples/Resources";
-
-const MODELOS = {
-  "Natori": `${BASE}/Natori/Natori.model3.json`,
-  "Mao": `${BASE}/Mao/Mao.model3.json`,
-};
+// A cara do Yato por enquanto: o NATORI (modelo Live2D oficial, gratuito) —
+// rapaz de ar sério. Vem do repositório CubismWebSamples da Live2D, via CDN.
+// (O Yato próprio e o Ren Foster ficam pra depois — ver a memória do projeto.
+//  Obs.: o Ren é moc3 v6 e nenhuma lib web desenha v6 hoje; testado 08/07/2026.)
+const MODELO =
+  "https://cdn.jsdelivr.net/gh/Live2D/CubismWebSamples@develop/Samples/Resources/Natori/Natori.model3.json";
 
 // O PIXI é o "motor de desenho". backgroundAlpha: 0 = canvas transparente
 // (deixa o fundo do CSS aparecer; na janela flutuante vira a transparência).
@@ -83,20 +78,6 @@ function instalarLipSync() {
   };
 }
 
-// Monta o menu de modelos a partir da lista e liga a troca. 'padrao' é o
-// nome do modelo que já vem selecionado.
-function montarSeletor(padrao) {
-  const seletor = document.getElementById("seletor");
-  for (const nome in MODELOS) {
-    const opcao = document.createElement("option");
-    opcao.value = MODELOS[nome];
-    opcao.textContent = nome;
-    if (nome === padrao) opcao.selected = true;
-    seletor.appendChild(opcao);
-  }
-  seletor.addEventListener("change", (e) => carregar(e.target.value));
-}
-
 // ─────────────────────── O CONTRATO (Python → JS) ───────────────────────
 // Estas funções globais são o que o processo Python vai chamar via pywebview.
 
@@ -142,5 +123,4 @@ window.addEventListener("keydown", (e) => {
 });
 
 window.addEventListener("resize", encaixar);
-montarSeletor("Natori");
-carregar(MODELOS["Natori"]);   // o manequim escolhido pro desenvolvimento
+carregar(MODELO);   // a cara do Yato: Natori

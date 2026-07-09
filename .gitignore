@@ -2,6 +2,10 @@
 CLAUDE.md
 .claude/
 
+# Cubism Core proprietário (baixado do SDK oficial da Live2D; não pode
+# redistribuir). Fica local pra testes; nunca sobe pro GitHub.
+yato-py/avatar/live2dcubismcore.min.js
+
 # Lixo de sistema operacional
 Thumbs.db
 .DS_Store
