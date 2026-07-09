@@ -19,3 +19,6 @@ fatos.json
 # Modelos de voz do Piper (~60 MB cada) — baixáveis, como o modelo do Ollama.
 # Quem clonar baixa a voz (instruções no README).
 vozes/
+
+# As imagens que o Yato desenha são SEU conteúdo gerado, não código do projeto.
+imagens_geradas/

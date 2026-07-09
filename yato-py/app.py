@@ -35,6 +35,7 @@ from memoria import (carregar_fatos, listar_conversas, novo_arquivo_conversa,
 import voz
 import ouvido
 import avatar2d
+import imagem
 
 # ---- Os MODOS: nomes amigáveis pra temperatura ----
 # Temperatura é o "grau de ousadia" na escolha de cada palavra — mas um
@@ -137,10 +138,10 @@ class App(ctk.CTk):
             text_color="#9a9ab0", fg_color="#242430", corner_radius=6,
         ).pack(side="left", padx=(8, 0))
 
-        # O TOGGLE Chatbot / Avatar (a fundação dos dois modos de visualização).
+        # O TOGGLE entre os modos de visualização: Chat, Avatar e Imagem.
         self.toggle_view = ctk.CTkSegmentedButton(
-            topo, values=["💬 Chat", "🎭 Avatar"],
-            command=self._view_mudou, width=150,
+            topo, values=["💬 Chat", "🎭 Avatar", "🎨 Imagem"],
+            command=self._view_mudou, width=220,
         )
         self.toggle_view.set("💬 Chat")
         self.toggle_view.pack(side="left", padx=(14, 0))
@@ -248,8 +249,9 @@ class App(ctk.CTk):
         self.chip_anexo.pack(side="left")
 
         # Linha de baixo: anexar + campo de digitar + botão enviar.
-        baixo = ctk.CTkFrame(self.principal, fg_color="transparent")
-        baixo.pack(fill="x", padx=12, pady=(0, 12))
+        self.linha_baixo = ctk.CTkFrame(self.principal, fg_color="transparent")
+        self.linha_baixo.pack(fill="x", padx=12, pady=(0, 12))
+        baixo = self.linha_baixo
 
         ctk.CTkButton(
             baixo, text="📎", width=36,
@@ -267,13 +269,23 @@ class App(ctk.CTk):
         self.botao = ctk.CTkButton(baixo, text="Enviar", width=90, command=self.enviar)
         self.botao.pack(side="left", padx=(8, 0))
 
+        # ---- Modo IMAGEM: o laboratório de geração (Forge + Nova Anime XL) ----
+        # Nasce OCULTO (nunca empacotado) — só aparece quando o modo é trocado.
+        self.view_imagem = ctk.CTkFrame(self.principal, fg_color="transparent")
+        self._montar_view_imagem()
+
         self._redesenhar_conversa()
         self.entrada.focus()
 
     # ------------------------------------------------------- modo avatar
     def _view_mudou(self, valor):
-        """Chamado pelo toggle do topo: alterna chat ↔ avatar."""
-        self.trocar_modo_view("avatar" if "Avatar" in valor else "chat")
+        """Chamado pelo toggle do topo: alterna entre chat, avatar e imagem."""
+        if "Avatar" in valor:
+            self.trocar_modo_view("avatar")
+        elif "Imagem" in valor:
+            self.trocar_modo_view("imagem")
+        else:
+            self.trocar_modo_view("chat")
 
     # -------------------------------------------------------------- voz
     def _toggle_voz(self):
@@ -349,9 +361,9 @@ class App(ctk.CTk):
         threading.Thread(target=tocar, daemon=True).start()
 
     def trocar_modo_view(self, modo):
-        """Liga/desliga o avatar flutuante (Live2D numa janela por cima da tela).
-        A conversa continua SEMPRE visível na área central — o 'modo Avatar' só
-        abre/fecha a janela do avatar, que roda num processo à parte."""
+        """Troca o que aparece na área central: a conversa (chat) ou o
+        laboratório de imagem. O avatar é à parte: uma janela flutuante que
+        só abre/fecha — nunca troca a área central."""
         if modo == "avatar":
             if not avatar2d.disponivel():
                 self._bolha("Avatar indisponível — falta o pywebview ou a pasta "
@@ -361,15 +373,207 @@ class App(ctk.CTk):
                 return
             self.modo_view = "avatar"
             avatar2d.mostrar()
+            return
+
+        avatar2d.esconder()   # sair do avatar fecha a janela flutuante
+
+        if modo == "imagem":
+            self.modo_view = "imagem"
+            self._area_chat_visivel(False)
+            self.view_imagem.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+            self._atualizar_lista_modelos()   # reflete o que está no Forge AGORA
         else:
             self.modo_view = "chat"
-            avatar2d.esconder()
+            self.view_imagem.pack_forget()
+            self._area_chat_visivel(True)
+
+    def _area_chat_visivel(self, visivel):
+        """Mostra ou esconde TODA a interface do chat (mensagens + barra de
+        digitar + seletor de modo) — usado ao entrar/sair do modo Imagem."""
+        if visivel:
+            self.area.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+            self.linha_modo.pack(fill="x", padx=14, pady=(0, 4))
+            self.linha_baixo.pack(fill="x", padx=12, pady=(0, 12))
+        else:
+            self.area.pack_forget()
+            self.linha_modo.pack_forget()
+            self.linha_baixo.pack_forget()
+            self.linha_anexo.pack_forget()   # o chip de anexo some junto
 
     def _expressao(self, nome):
         """Repassa a expressão (ociosa/pensando/falando/feliz) pro avatar
         flutuante — só faz efeito se ele estiver aberto (modo Avatar)."""
         if self.modo_view == "avatar":
             avatar2d.definir_expressao(nome)
+
+    # ------------------------------------------------------- modo imagem
+    def _montar_view_imagem(self):
+        """O laboratório de geração: descreva em português → o cérebro
+        melhora o prompt (traduz + tags de qualidade) → o Forge desenha."""
+        v = self.view_imagem
+
+        # O seletor de MODELO (checkpoint): cada um tem um ponto forte
+        # diferente (anime, realismo…) — troca direto daqui, sem mexer no
+        # Forge na mão. self._modelos_disponiveis mapeia nome amigável ->
+        # título completo (o que a API do Forge realmente espera).
+        linha_modelo = ctk.CTkFrame(v, fg_color="transparent")
+        linha_modelo.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(linha_modelo, text="Modelo:", font=ctk.CTkFont(size=12)).pack(side="left")
+        self._modelos_disponiveis = {}
+        self.seletor_modelo_imagem = ctk.CTkOptionMenu(
+            linha_modelo, values=["(carregando…)"], width=240,
+            command=self._trocar_modelo_click,
+        )
+        self.seletor_modelo_imagem.pack(side="left", padx=(8, 8))
+        ctk.CTkButton(
+            linha_modelo, text="🔄", width=32,
+            fg_color="transparent", border_width=1,
+            command=self._atualizar_lista_modelos,
+        ).pack(side="left")
+
+        ctk.CTkLabel(
+            v, text="Descreva a imagem (em português):",
+            font=ctk.CTkFont(size=12), anchor="w",
+        ).pack(fill="x", pady=(0, 4))
+
+        self.campo_descricao = ctk.CTkTextbox(v, height=64)
+        self.campo_descricao.pack(fill="x")
+
+        ctk.CTkButton(
+            v, text="✨ Melhorar prompt", command=self._melhorar_prompt_click,
+        ).pack(anchor="w", pady=(8, 12))
+
+        ctk.CTkLabel(
+            v, text="Prompt (em inglês — pode editar antes de gerar):",
+            font=ctk.CTkFont(size=12), anchor="w",
+        ).pack(fill="x", pady=(0, 4))
+
+        self.campo_prompt = ctk.CTkTextbox(v, height=84)
+        self.campo_prompt.pack(fill="x")
+
+        linha_gerar = ctk.CTkFrame(v, fg_color="transparent")
+        linha_gerar.pack(fill="x", pady=(8, 4))
+        ctk.CTkButton(
+            linha_gerar, text="🎨 Gerar", command=self._gerar_imagem_click,
+        ).pack(side="left")
+        self.status_imagem = ctk.CTkLabel(
+            linha_gerar, text="", font=ctk.CTkFont(size=11), text_color="#8a8aa0",
+        )
+        self.status_imagem.pack(side="left", padx=(10, 0))
+
+        # O resultado: começa com um placeholder; vira a imagem de verdade
+        # depois de gerar (CTkImage guardada em self._imagem_gerada_ctk —
+        # sem a referência viva, o Tkinter "esquece" a imagem e ela some).
+        self.rotulo_imagem_gerada = ctk.CTkLabel(
+            v, text="🖼️ a imagem gerada aparece aqui", text_color="#6a6a80",
+            fg_color="#1a1a24", corner_radius=10, height=320,
+        )
+        self.rotulo_imagem_gerada.pack(fill="both", expand=True, pady=(8, 0))
+        self._imagem_gerada_ctk = None
+
+    def _melhorar_prompt_click(self):
+        """Manda o cérebro traduzir/expandir a descrição em português pra um
+        prompt de verdade — roda numa thread (não trava a janela)."""
+        descricao = self.campo_descricao.get("1.0", "end").strip()
+        if not descricao:
+            self.status_imagem.configure(text="Escreva uma descrição primeiro.")
+            return
+        self.status_imagem.configure(text="✨ melhorando o prompt…")
+
+        def trabalhar():
+            try:
+                prompt = imagem.melhorar_prompt(descricao)
+                self.after(0, lambda: self._prompt_melhorado(prompt))
+            except imagem.ImagemError as erro:
+                self.after(0, lambda: self.status_imagem.configure(text=str(erro)))
+
+        threading.Thread(target=trabalhar, daemon=True).start()
+
+    def _prompt_melhorado(self, prompt):
+        self.campo_prompt.delete("1.0", "end")
+        self.campo_prompt.insert("1.0", prompt)
+        self.status_imagem.configure(text="Prompt pronto — revise e gere quando quiser.")
+
+    def _gerar_imagem_click(self):
+        """Gera a imagem a partir do prompt (usa o que estiver no campo —
+        melhorado ou digitado direto). Roda numa thread (Forge demora)."""
+        prompt = self.campo_prompt.get("1.0", "end").strip()
+        if not prompt:
+            self.status_imagem.configure(text="Sem prompt — escreva ou melhore uma descrição.")
+            return
+        self.status_imagem.configure(text="🎨 desenhando… (pode levar uns 20-30s)")
+
+        def trabalhar():
+            try:
+                caminho = imagem.gerar(prompt)
+                self.after(0, lambda: self._imagem_pronta(caminho))
+            except imagem.ImagemError as erro:
+                self.after(0, lambda: self.status_imagem.configure(text=str(erro)))
+
+        threading.Thread(target=trabalhar, daemon=True).start()
+
+    def _imagem_pronta(self, caminho):
+        """Mostra a imagem gerada no rótulo, redimensionada pra caber."""
+        img = Image.open(caminho)
+        altura = 320
+        largura = int(img.width * altura / img.height)
+        self._imagem_gerada_ctk = ctk.CTkImage(
+            light_image=img, dark_image=img, size=(largura, altura))
+        self.rotulo_imagem_gerada.configure(text="", image=self._imagem_gerada_ctk)
+        self.status_imagem.configure(text=f"pronto — salvo em {caminho.name}")
+
+    def _nome_amigavel_modelo(self, titulo):
+        """'novaAnimeXL_ilV190.safetensors [fa486caafc]' -> 'novaAnimeXL ilV190'
+        (tira a extensão e o hash técnico, só pra ficar legível no seletor)."""
+        sem_hash = titulo.split(" [")[0]
+        return sem_hash.replace(".safetensors", "").replace("_", " ")
+
+    def _atualizar_lista_modelos(self):
+        """Busca os checkpoints do Forge (numa thread) e repopula o seletor."""
+        self.status_imagem.configure(text="🔄 buscando modelos no Forge…")
+
+        def trabalhar():
+            modelos = imagem.listar_modelos()
+            atual = imagem.modelo_atual()
+            self.after(0, lambda: self._lista_modelos_pronta(modelos, atual))
+
+        threading.Thread(target=trabalhar, daemon=True).start()
+
+    def _lista_modelos_pronta(self, modelos, atual):
+        if not modelos:
+            self.seletor_modelo_imagem.configure(values=["(Forge fechado)"])
+            self.seletor_modelo_imagem.set("(Forge fechado)")
+            self.status_imagem.configure(text="Forge indisponível — abra o webui-user.bat.")
+            return
+
+        self._modelos_disponiveis = {self._nome_amigavel_modelo(t): t for t in modelos}
+        nomes = list(self._modelos_disponiveis.keys())
+        self.seletor_modelo_imagem.configure(values=nomes)
+
+        # Marca no seletor o que já está carregado de fato no Forge (pode ter
+        # sido trocado por fora, direto na WebUI).
+        nome_atual = next((n for n, t in self._modelos_disponiveis.items()
+                           if atual and t.startswith(atual)), nomes[0])
+        self.seletor_modelo_imagem.set(nome_atual)
+        self.status_imagem.configure(text=f"{len(nomes)} modelo(s) disponível(is).")
+
+    def _trocar_modelo_click(self, nome_amigavel):
+        """Chamado pelo seletor: troca o checkpoint ativo no Forge (demora —
+        roda numa thread)."""
+        titulo = self._modelos_disponiveis.get(nome_amigavel)
+        if not titulo:
+            return
+        self.status_imagem.configure(text=f"🔄 carregando {nome_amigavel}… (pode levar uns 30s)")
+
+        def trabalhar():
+            try:
+                imagem.trocar_modelo(titulo)
+                self.after(0, lambda: self.status_imagem.configure(
+                    text=f"✅ {nome_amigavel} carregado — pode gerar."))
+            except imagem.ImagemError as erro:
+                self.after(0, lambda: self.status_imagem.configure(text=str(erro)))
+
+        threading.Thread(target=trabalhar, daemon=True).start()
 
     def _redesenhar_conversa(self):
         """Limpa a área e redesenha as bolhas a partir de self.mensagens.

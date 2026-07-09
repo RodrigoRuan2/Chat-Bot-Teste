@@ -20,7 +20,9 @@ cerebro.py  ──HTTP──►  Ollama em http://localhost:11434  ──►  mo
 personalidade.py  (o texto que diz QUEM o Yato é)
 memoria.py        (salvar/carregar a conversa no disco)
 voz.py            (fala as respostas em voz alta — Piper, offline)
+ouvido.py         (escuta o microfone e transcreve — Whisper, offline)
 avatar2d.py  ──HTTP──►  avatar_app.py  (janela Live2D flutuante, processo à parte)
+imagem.py    ──HTTP──►  Forge (Stable Diffusion) em http://127.0.0.1:7860  ──►  desenha
 ```
 
 Cada arquivo tem uma responsabilidade separada — assim cada parte é
@@ -34,8 +36,10 @@ fácil de entender e mudar sozinha:
 | `memoria.py`        | Persistência: o histórico de conversas (`conversas/`) e os fatos sobre você (`fatos.json`). |
 | `app.py`            | A janela (CustomTkinter). Só tela; pede pro `cerebro` pensar.|
 | `voz.py`            | A voz: transforma a resposta em áudio (Piper) e toca — offline. |
+| `ouvido.py`         | O ouvido: grava o microfone e transcreve com o Whisper — offline. |
 | `avatar2d.py`       | O "controle remoto" do avatar: abre/fecha a janela e manda os comandos (boca, expressão). |
 | `avatar_app.py`     | A janela flutuante do avatar Live2D (roda num **processo à parte**). |
+| `imagem.py`         | O estúdio de desenho: pede pro Forge gerar imagens e melhora o prompt com o cérebro. |
 
 Essa divisão é de propósito: dá pra testar o `cerebro.py` sozinho (sem abrir a
 janela) e, no futuro, trocar o Ollama por outra coisa mexendo só num lugar.
@@ -345,6 +349,36 @@ Como funciona por dentro (a parte honesta):
 
 Rodar o avatar sozinho, sem o Yato: o atalho **`Testar Avatar.bat`**.
 
+## O Yato desenha (geração de imagem) 🎨
+
+O topo tem a aba **🎨 Imagem**: um estúdio de geração local. Você **descreve em
+português**, o cérebro do Yato **traduz e melhora o prompt** (pra inglês, com as
+tags de qualidade certas), e o **Stable Diffusion** desenha. Tudo na sua máquina.
+
+Como funciona por dentro:
+
+- **O Yato não gera a imagem — o Forge gera.** O [Forge](https://github.com/lllyasviel/stable-diffusion-webui-forge)
+  (Stable Diffusion WebUI) é um programa **à parte**, aberto com a flag `--api`.
+  O `imagem.py` só manda o pedido pra ele por HTTP local (`/sdapi/v1/txt2img`),
+  **sem chave nenhuma** — o mesmo espírito do `cerebro.py` com o Ollama. É um
+  passo **opcional**: sem o Forge aberto, a aba avisa e o resto do Yato funciona.
+- **✨ Melhorar prompt:** o `cerebro.py` (qwen2.5) traduz sua ideia pra um prompt
+  em inglês, no estilo *tags* que os modelos Illustrious esperam. Regra esperta:
+  pra **personagem conhecido**, ele escreve só o nome + a obra e **não inventa a
+  aparência** — o modelo de imagem já a conhece melhor (foi treinado em fan art).
+- **Escolher o modelo:** o seletor no topo lista os *checkpoints* instalados no
+  Forge (ex.: Nova Anime XL, WAI-Illustrious) — cada um com seu estilo. Trocar
+  demora uns segundos (o Forge recarrega o modelo do disco).
+- **Revezamento de VRAM:** o Ollama (~5 GB) e o Stable Diffusion (~6-7 GB) não
+  cabem juntos na GPU de 8 GB. Antes de gerar, o Yato manda o Ollama **soltar a
+  GPU** (`keep_alive: 0`) — o mesmo truque da visão. Ele recarrega sozinho depois.
+- **Sem texto na imagem:** modelos de imagem são péssimos em desenhar letras
+  (viram garranchos), então o *prompt negativo* já bloqueia texto/marca-d'água.
+- As imagens saem em `imagens_geradas/` (é o seu conteúdo — fica no `.gitignore`).
+
+Pré-requisito: **instalar o Forge** e abri-lo com `--api`. Ele é pesado e roda
+na GPU; não vem com o `preparar.py` (é um projeto externo, instalado à parte).
+
 ## Se algo der errado
 
 - O Yato responde com mensagens diferentes pra cada problema: Ollama fechado,
@@ -460,6 +494,19 @@ O projeto evolui em **rodadas** — cada uma vira um commit com nome claro.
 - [x] Botão 🎤 no topo: 1º clique grava, 2º clique transcreve e **envia direto**
 - [x] `preparar.py` pré-baixa o modelo do Whisper e **desbloqueia as DLLs** (o
       Windows barrava o PyAV — "Controle de Aplicativo")
+
+### ✅ Rodada 11 — o Yato desenha 🎨
+- [x] Aba dedicada **🎨 Imagem** (não mistura com o chat)
+- [x] `imagem.py`: fala com a API do **Forge** (`/sdapi/v1/txt2img`), local,
+      sem chave — o mesmo espírito do `cerebro.py` com o Ollama
+- [x] **✨ Melhorar prompt**: o cérebro (qwen2.5) traduz a descrição em
+      português pra um prompt em inglês com tags de qualidade; pra personagem
+      conhecido, não inventa a aparência (o modelo de imagem já sabe)
+- [x] Revezamento de VRAM (Ollama ↔ Forge): `keep_alive: 0` — o MESMO truque
+      que já faz o cérebro conviver com o olho da visão
+- [x] Seletor de **checkpoint** (Nova Anime XL, WAI-Illustrious…) + prompt
+      negativo contra texto/marca-d'água
+- [ ] Futuro: o Yato abrir o Forge sozinho quando precisar (hoje é manual)
 
 ### 💡 Depois (sem número ainda)
 - [ ] Mais ferramentas (clima, lembretes, ler arquivos...)
