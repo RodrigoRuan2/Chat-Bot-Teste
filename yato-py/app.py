@@ -16,12 +16,16 @@ Conceitos novos que aparecem aqui e valem estudar:
 import base64
 import io
 import logging
+import os
 import re
 import socket
 import sys
 import threading
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+import tkinter
+import tkinter.font as tkfont
 from tkinter import filedialog
 
 import customtkinter as ctk
@@ -95,8 +99,8 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Yato — IA local")
-        self.geometry("520x660")
-        self.minsize(420, 480)
+        self.geometry("600x680")
+        self.minsize(540, 480)
 
         # Sem isto, o Windows agrupa a janela sob o ícone do 'pythonw' na barra
         # de tarefas (porque é ele que roda o app). Dar um "AppUserModelID"
@@ -133,7 +137,7 @@ class App(ctk.CTk):
         self.texto_parcial = ""      # o que já chegou da resposta atual
         self.fonte_atual = ""        # o que a última pesquisa trouxe (pro "continua")
         self.imagem_anexada = ""     # a imagem colada/anexada (base64), 1 por mensagem
-        self.modo_view = "chat"      # "chat" ou "avatar" (o toggle do topo)
+        self.modo_view = "chat"      # "chat" ou "imagem" (avatar virou on/off à parte)
         self.voz_ligada = False      # o Yato lê as respostas em voz alta?
         self.ouvindo = False         # o microfone está gravando agora?
 
@@ -146,9 +150,12 @@ class App(ctk.CTk):
 
     # ----------------------------------------------------------------- tela
     def _montar_tela(self):
-        # ---- Topo: título + status do cérebro + botão de nova conversa ----
+        # ---- Topo (LINHA 1): identidade (esquerda) + status (direita) ----
+        # A barra vive em DUAS linhas: coisa demais numa fileira só espremia e
+        # cortava os nomes numa janela pequena. Aqui em cima ficam só os itens
+        # curtos — o nome, o badge do modelo e o status — que sempre cabem.
         topo = ctk.CTkFrame(self, fg_color="transparent")
-        topo.pack(fill="x", padx=12, pady=(12, 6))
+        topo.pack(fill="x", padx=12, pady=(12, 2))
 
         ctk.CTkLabel(
             topo, text="⚔️  Yato",
@@ -161,59 +168,56 @@ class App(ctk.CTk):
             text_color="#9a9ab0", fg_color="#242430", corner_radius=6,
         ).pack(side="left", padx=(8, 0))
 
-        # O TOGGLE entre os modos de visualização: Chat, Avatar e Imagem.
-        self.toggle_view = ctk.CTkSegmentedButton(
-            topo, values=["💬 Chat", "🎭 Avatar", "🎨 Imagem"],
-            command=self._view_mudou, width=220,
-        )
-        self.toggle_view.set("💬 Chat")
-        self.toggle_view.pack(side="left", padx=(14, 0))
-
-        ctk.CTkButton(
-            topo, text="🧹 Nova", width=64,
-            fg_color="transparent", border_width=1,
-            command=self.nova_conversa,
-        ).pack(side="right")
-
-        # Liga/desliga a VOZ (o Yato lê as respostas em voz alta). Começa
-        # desligada — o app não fala sozinho até você pedir.
-        self.botao_voz = ctk.CTkButton(
-            topo, text="🔇", width=40,
-            fg_color="transparent", border_width=1,
-            command=self._toggle_voz,
-        )
-        self.botao_voz.pack(side="right", padx=(0, 8))
-
-        # O MICROFONE: grava sua fala, transcreve (Whisper local) e envia
-        # direto. Clica pra gravar, clica de novo pra mandar.
-        self.botao_ouvir = ctk.CTkButton(
-            topo, text="🎤", width=40,
-            fg_color="transparent", border_width=1,
-            command=self._toggle_ouvir,
-        )
-        self.botao_ouvir.pack(side="right", padx=(0, 8))
-
-        # O botão 📜 agora abre/fecha um PAINEL LATERAL embutido (não mais
-        # uma janela extra) — e por ser embutido ele se atualiza sozinho.
-        ctk.CTkButton(
-            topo, text="📜 Histórico", width=100,
-            fg_color="transparent", border_width=1,
-            command=self.toggle_painel,
-        ).pack(side="right", padx=(0, 8))
-
-        # Mostra a memória DIRETO do arquivo, sem passar pelo modelo:
-        # perguntar "o que você sabe?" pro modelo rende enfeite (testado!);
-        # este botão é o gabarito — determinístico, sempre a verdade.
-        ctk.CTkButton(
-            topo, text="📌 Memória", width=100,
-            fg_color="transparent", border_width=1,
-            command=self.mostrar_memoria,
-        ).pack(side="right", padx=(0, 8))
-
         # Status do cérebro. Repare: cor E texto mudam juntos — nunca dependa
         # só da cor (acessibilidade: daltônico também precisa entender).
         self.status = ctk.CTkLabel(topo, text="● acordando…", text_color="#f1c40f")
-        self.status.pack(side="right", padx=(0, 10))
+        self.status.pack(side="right", padx=(0, 2))
+
+        # ---- Barra (LINHA 2): navegação (esquerda) + ações (direita) ----
+        barra = ctk.CTkFrame(self, fg_color="transparent")
+        barra.pack(fill="x", padx=12, pady=(0, 6))
+
+        # O TOGGLE da área central: só Chat e Imagem. O Avatar SAIU daqui —
+        # ele não é um "modo de tela", é uma janela flutuante que fica POR CIMA
+        # de tudo. Virou um liga/desliga próprio (o switch ao lado).
+        self.toggle_view = ctk.CTkSegmentedButton(
+            barra, values=["💬 Chat", "🎨 Imagem"],
+            command=self._view_mudou, width=160,
+        )
+        self.toggle_view.set("💬 Chat")
+        self.toggle_view.pack(side="left")
+
+        # O AVATAR agora é on/off INDEPENDENTE: pode ficar aberto tanto no Chat
+        # quanto na Imagem. O switch controla e reflete a janela flutuante.
+        self.switch_avatar = ctk.CTkSwitch(
+            barra, text="🎭 Avatar", command=self._toggle_avatar,
+        )
+        self.switch_avatar.pack(side="left", padx=(12, 0))
+
+        # À direita: em vez de uma FILEIRA de ícones crípticos (que obrigava a
+        # clicar em cada um pra descobrir o que faz), fica só o microfone
+        # visível — a ação que você usa NO MEIO da conversa e que mostra
+        # estado (🔴 gravando) — e um menu "⋮" com as demais funções NOMEADAS.
+        # Empacotados side="right" (direita→esquerda): o ⋮ vai primeiro, então
+        # aparece na ponta direita; o 🎤 fica à esquerda dele.
+
+        # ⋮ Menu de funções: Nova conversa, Histórico, Memória, Voz, pasta…
+        self.botao_menu = ctk.CTkButton(
+            barra, text="⋮", width=40,
+            font=ctk.CTkFont(size=18, weight="bold"),
+            fg_color="transparent", border_width=1,
+            command=self._abrir_menu_funcoes,
+        )
+        self.botao_menu.pack(side="right", padx=(6, 0))
+
+        # 🎤 Microfone: grava sua fala, transcreve (Whisper local) e envia
+        # direto. Clica pra gravar, clica de novo pra mandar (mostra 🔴).
+        self.botao_ouvir = ctk.CTkButton(
+            barra, text="🎤", width=40,
+            fg_color="transparent", border_width=1,
+            command=self._toggle_ouvir,
+        )
+        self.botao_ouvir.pack(side="right", padx=(6, 0))
 
         # ---- Corpo: painel lateral (recolhível) + área principal ----
         corpo = ctk.CTkFrame(self, fg_color="transparent")
@@ -282,9 +286,22 @@ class App(ctk.CTk):
             command=self._escolher_imagem,
         ).pack(side="left", padx=(0, 6))
 
-        self.entrada = ctk.CTkEntry(baixo, placeholder_text="Fala com o Yato...")
+        # O campo é um TEXTBOX (multi-linha): o texto QUEBRA a linha em vez de
+        # sumir pro lado, e a caixa CRESCE conforme você escreve (até um teto —
+        # aí ela rola por dentro). Enter envia; Shift+Enter quebra a linha.
+        self._DICA_ENTRADA = "Fala com o Yato..."
+        self._MAX_LINHAS_ENTRADA = 6
+        self.entrada = ctk.CTkTextbox(baixo, height=34, wrap="word")
         self.entrada.pack(side="left", fill="x", expand=True)
-        self.entrada.bind("<Return>", lambda evento: self.enviar())  # Enter envia
+        # Guarda a cor normal do texto ANTES de pintar a dica de cinza.
+        self._cor_texto_entrada = self.entrada.cget("text_color")
+        self._dica_ativa = False
+        self._mostrar_dica_entrada()
+        self.entrada.bind("<Return>", self._enter_envia)      # Enter = enviar
+        self.entrada.bind("<Shift-Return>", lambda e: None)   # Shift+Enter = linha nova
+        self.entrada.bind("<KeyRelease>", self._ajustar_altura_entrada)
+        self.entrada.bind("<FocusIn>", self._entrada_focou)
+        self.entrada.bind("<FocusOut>", self._entrada_desfocou)
         # Ctrl+V com IMAGEM no clipboard anexa; com texto, cola normal.
         self.entrada.bind("<Control-v>", self._colar)
         self.entrada.bind("<Control-V>", self._colar)
@@ -302,32 +319,98 @@ class App(ctk.CTk):
 
     # ------------------------------------------------------- modo avatar
     def _view_mudou(self, valor):
-        """Chamado pelo toggle do topo: alterna entre chat, avatar e imagem."""
-        if "Avatar" in valor:
-            self.trocar_modo_view("avatar")
-        elif "Imagem" in valor:
-            self.trocar_modo_view("imagem")
-        else:
-            self.trocar_modo_view("chat")
+        """Chamado pelo toggle do topo: alterna a área central entre chat e imagem."""
+        self.trocar_modo_view("imagem" if "Imagem" in valor else "chat")
 
     # -------------------------------------------------------------- voz
     def _toggle_voz(self):
         """Liga/desliga a voz. Ao ligar, AQUECE o modelo em segundo plano
         (carregar leva alguns segundos — como o cérebro, evita a espera na
-        1ª fala)."""
+        1ª fala). O estado (ligada/desligada) aparece no menu ⋮."""
         if not voz.disponivel():
-            self.botao_voz.configure(text="🔇")
             self._bolha("Voz indisponível — o modelo do Piper não está na "
                         "pasta vozes/.", autor="dica")
             return
         self.voz_ligada = not self.voz_ligada
-        self.botao_voz.configure(text="🔊" if self.voz_ligada else "🔇")
         if self.voz_ligada:
             threading.Thread(target=voz._carregar, daemon=True).start()  # aquece
         else:
             voz.parar()   # cala a boca na hora se desligou no meio de uma fala
-            if self.modo_view == "avatar":
+            if avatar2d.esta_aberto():
                 avatar2d.lip_sync(0.0)   # e fecha a boca do avatar
+
+    # ------------------------------------------------- menu de funções (⋮)
+    def _abrir_menu_funcoes(self):
+        """Abre/fecha o menu ⋮ com as funções do Yato (só os NOMES).
+
+        TOGGLE: clicar no ⋮ de novo FECHA. Um menu nativo já se fecha ao clicar
+        fora — mas esse mesmo clique no botão o reabriria na sequência. Então,
+        quando o menu some (evento <Unmap>), guardamos o instante; se o ⋮ for
+        clicado logo em seguida (o clique que fechou), a gente NÃO reabre.
+
+        Ele abre pra DENTRO da janela: como o ⋮ fica colado na borda direita,
+        alinhamos a borda direita do menu com a do botão e o deixamos crescer
+        pra esquerda e pra baixo (senão vazaria pra fora do Yato).
+        """
+        if time.monotonic() - getattr(self, "_menu_fechado_em", 0) < 0.25:
+            return   # foi o clique que ACABOU de fechar o menu — não reabre
+
+        rotulos = ["Nova conversa", "Histórico de conversas", "Memória",
+                   "Ler respostas em voz alta", "Abrir pasta do projeto"]
+        # Cinza PADRÃO do CustomTkinter (o mesmo das superfícies do Yato),
+        # resolvido pro modo claro/escuro atual — em vez de uma cor fixa minha.
+        cor_fundo = self._apply_appearance_mode(
+            ctk.ThemeManager.theme["CTkFrame"]["fg_color"])
+        menu = tkinter.Menu(
+            self, tearoff=0,
+            bg=cor_fundo, fg="#e6e6f0",
+            activebackground="#6c5ce7", activeforeground="white",
+            bd=0, font=("Segoe UI", 11),
+        )
+        menu.add_command(label="Nova conversa", command=self.nova_conversa)
+        menu.add_command(label="Histórico de conversas", command=self.toggle_painel)
+        menu.add_command(label="Memória", command=self.mostrar_memoria)
+        menu.add_separator()
+        # A voz é um checkbutton: o ✓ nativo mostra se está ligada. O var é
+        # recriado a cada abertura a partir de self.voz_ligada, então sempre
+        # reflete o estado atual (o toggle de verdade mora no _toggle_voz).
+        self._var_voz = tkinter.BooleanVar(value=self.voz_ligada)
+        menu.add_checkbutton(label="Ler respostas em voz alta",
+                             variable=self._var_voz, command=self._toggle_voz)
+        menu.add_separator()
+        menu.add_command(label="Abrir pasta do projeto",
+                         command=self._abrir_pasta_projeto)
+        # Ao sumir (item escolhido OU clique fora OU clique no próprio ⋮),
+        # marca o instante — é isso que faz o toggle pelo botão funcionar.
+        menu.bind("<Unmap>",
+                  lambda e: setattr(self, "_menu_fechado_em", time.monotonic()))
+
+        # Largura estimada do menu = a maior label + folga das margens. Com
+        # ela, ancoramos a borda direita do menu na direita do botão ⋮.
+        fonte = tkfont.Font(family="Segoe UI", size=11)
+        largura = max(fonte.measure(t) for t in rotulos) + 70
+        x = self.botao_menu.winfo_rootx() + self.botao_menu.winfo_width() - largura
+        y = self.botao_menu.winfo_rooty() + self.botao_menu.winfo_height()
+        try:
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+
+    def _abrir_pasta(self, pasta):
+        """Abre uma pasta no Explorer do Windows (os.startfile só existe lá)."""
+        try:
+            Path(pasta).mkdir(parents=True, exist_ok=True)
+            os.startfile(str(pasta))
+        except (OSError, AttributeError):
+            logging.exception("Não consegui abrir a pasta: %s", pasta)
+
+    def _abrir_pasta_projeto(self):
+        """📁 do menu ⋮: abre a pasta do projeto (onde mora o app.py)."""
+        self._abrir_pasta(Path(__file__).parent)
+
+    def _abrir_pasta_imagens(self):
+        """📁 da aba Imagem: abre a pasta das imagens que o Yato gerou."""
+        self._abrir_pasta(imagem.PASTA_IMAGENS)
 
     # ------------------------------------------------------------- ouvir
     def _toggle_ouvir(self):
@@ -362,9 +445,70 @@ class App(ctk.CTk):
             self._bolha("Não entendi o áudio — tenta de novo, mais perto do "
                         "microfone.", autor="dica")
             return
-        self.entrada.delete(0, "end")
-        self.entrada.insert(0, texto)
+        self._set_entrada(texto)
         self.enviar()
+
+    # ---------------------------------------------- campo de digitar
+    # O campo é um CTkTextbox (multi-linha), que NÃO tem placeholder nativo
+    # como o CTkEntry. Então a "dica cinza" e o crescer-com-o-texto são feitos
+    # na mão aqui. Todo acesso ao texto passa por estes helpers — assim o
+    # resto do código não precisa saber dos detalhes do Textbox.
+    def _mostrar_dica_entrada(self):
+        """Põe a dica cinza no campo (quando ele está vazio e sem foco)."""
+        self._dica_ativa = True
+        self.entrada.delete("1.0", "end")
+        self.entrada.insert("1.0", self._DICA_ENTRADA)
+        self.entrada.configure(text_color="#6a6a78")
+
+    def _esconder_dica_entrada(self):
+        """Tira a dica pra você escrever de verdade (texto na cor normal)."""
+        if self._dica_ativa:
+            self._dica_ativa = False
+            self.entrada.delete("1.0", "end")
+            self.entrada.configure(text_color=self._cor_texto_entrada)
+
+    def _entrada_focou(self, evento=None):
+        self._esconder_dica_entrada()
+
+    def _entrada_desfocou(self, evento=None):
+        if not self.entrada.get("1.0", "end").strip():
+            self._mostrar_dica_entrada()
+            self._ajustar_altura_entrada()
+
+    def _texto_entrada(self):
+        """O texto REAL do campo (vazio se estiver mostrando só a dica cinza)."""
+        return "" if self._dica_ativa else self.entrada.get("1.0", "end")
+
+    def _set_entrada(self, texto):
+        """Escreve um texto no campo (usado pela transcrição de voz)."""
+        self._esconder_dica_entrada()
+        self._dica_ativa = False
+        self.entrada.delete("1.0", "end")
+        self.entrada.insert("1.0", texto)
+        self._ajustar_altura_entrada()
+
+    def _limpar_entrada(self):
+        """Esvazia o campo e o encolhe de volta pra uma linha."""
+        self._dica_ativa = False
+        self.entrada.delete("1.0", "end")
+        self._ajustar_altura_entrada()
+
+    def _enter_envia(self, evento=None):
+        """Enter envia; o 'break' impede o Textbox de inserir a quebra de linha
+        (o Shift+Enter, esse sim, quebra — tem bind próprio)."""
+        self.enviar()
+        return "break"
+
+    def _ajustar_altura_entrada(self, evento=None):
+        """Faz o campo CRESCER conforme o texto: conta as linhas EXIBIDAS (já
+        contando as quebras por palavra) e ajusta a altura, até o teto — daí
+        pra frente ele rola por dentro. O 20/14 são altura-de-linha e folga;
+        como o CustomTkinter escala esses números junto com a fonte, a conta
+        acompanha o DPI da tela sozinha."""
+        conta = self.entrada._textbox.count("1.0", "end", "displaylines")
+        linhas = conta[0] if conta else 1
+        linhas = max(1, min(linhas, self._MAX_LINHAS_ENTRADA))
+        self.entrada.configure(height=linhas * 20 + 14)
 
     def _falar(self, texto):
         """Fala o texto numa thread (não trava a janela). Com o avatar aberto,
@@ -372,7 +516,7 @@ class App(ctk.CTk):
         pra 'ociosa'."""
         self._expressao("falando")
         # Só liga o lip-sync se o avatar está aberto; senão, fala normal.
-        boca = avatar2d.lip_sync if self.modo_view == "avatar" else None
+        boca = avatar2d.lip_sync if avatar2d.esta_aberto() else None
 
         def tocar():
             try:
@@ -384,23 +528,9 @@ class App(ctk.CTk):
         threading.Thread(target=tocar, daemon=True).start()
 
     def trocar_modo_view(self, modo):
-        """Troca o que aparece na área central: a conversa (chat) ou o
-        laboratório de imagem. O avatar é à parte: uma janela flutuante que
-        só abre/fecha — nunca troca a área central."""
-        if modo == "avatar":
-            if not avatar2d.disponivel():
-                self._bolha("Avatar indisponível — falta instalar o Electron "
-                            "(rode: npm install em avatar-electron/) ou a pasta "
-                            "avatar/.", autor="dica")
-                self.toggle_view.set("💬 Chat")
-                self.modo_view = "chat"
-                return
-            self.modo_view = "avatar"
-            avatar2d.mostrar()
-            return
-
-        avatar2d.esconder()   # sair do avatar fecha a janela flutuante
-
+        """Troca SÓ a área central: a conversa (chat) ou o laboratório de
+        imagem. O avatar não entra mais aqui — ele é uma janela flutuante com
+        liga/desliga próprio (_toggle_avatar) e SOBREVIVE à troca de modo."""
         if modo == "imagem":
             self.modo_view = "imagem"
             self._area_chat_visivel(False)
@@ -410,6 +540,21 @@ class App(ctk.CTk):
             self.modo_view = "chat"
             self.view_imagem.pack_forget()
             self._area_chat_visivel(True)
+
+    def _toggle_avatar(self):
+        """Liga/desliga a janela flutuante do avatar — INDEPENDENTE do modo de
+        tela. Aberto, ele fica por cima de tudo e ganha lip-sync/expressões
+        quando o Yato fala (o _falar/_expressao checam avatar2d.esta_aberto())."""
+        if self.switch_avatar.get():           # ligou o switch → tentar abrir
+            if not avatar2d.disponivel():
+                self._bolha("Avatar indisponível — falta instalar o Electron "
+                            "(rode: npm install em avatar-electron/) ou a pasta "
+                            "avatar/.", autor="dica")
+                self.switch_avatar.deselect()  # não abriu → desliga o switch
+                return
+            avatar2d.mostrar()
+        else:                                  # desligou → fecha a janela
+            avatar2d.esconder()
 
     def _area_chat_visivel(self, visivel):
         """Mostra ou esconde TODA a interface do chat (mensagens + barra de
@@ -426,8 +571,8 @@ class App(ctk.CTk):
 
     def _expressao(self, nome):
         """Repassa a expressão (ociosa/pensando/falando/feliz) pro avatar
-        flutuante — só faz efeito se ele estiver aberto (modo Avatar)."""
-        if self.modo_view == "avatar":
+        flutuante — só faz efeito se ele estiver aberto agora."""
+        if avatar2d.esta_aberto():
             avatar2d.definir_expressao(nome)
 
     # ------------------------------------------------------- modo imagem
@@ -480,6 +625,12 @@ class App(ctk.CTk):
         ctk.CTkButton(
             linha_gerar, text="🎨 Gerar", command=self._gerar_imagem_click,
         ).pack(side="left")
+        # Atalho pra ver no Explorer tudo o que o Yato já desenhou.
+        ctk.CTkButton(
+            linha_gerar, text="📁 Imagens", width=110,
+            fg_color="transparent", border_width=1,
+            command=self._abrir_pasta_imagens,
+        ).pack(side="right")
         self.status_imagem = ctk.CTkLabel(
             linha_gerar, text="", font=ctk.CTkFont(size=11), text_color="#8a8aa0",
         )
@@ -893,7 +1044,7 @@ class App(ctk.CTk):
         logging.info("Conversa excluída: %s", arquivo.name)
 
     def enviar(self):
-        texto = self.entrada.get().strip()
+        texto = self._texto_entrada().strip()
         if self.bolha_pensando is not None:
             return  # já estamos esperando uma resposta
         if not texto and not self.imagem_anexada:
@@ -904,7 +1055,7 @@ class App(ctk.CTk):
 
         if self.voz_ligada:
             voz.parar()   # nova pergunta = corta a fala anterior
-            if self.modo_view == "avatar":
+            if avatar2d.esta_aberto():
                 avatar2d.lip_sync(0.0)   # fecha a boca do avatar na hora
 
         # A imagem desta mensagem (se houver) — capturada AGORA e removida
@@ -915,7 +1066,7 @@ class App(ctk.CTk):
         # 1) mostra sua fala e guarda no histórico (com marcador de imagem)
         self._bolha(("🖼️ " if imagem else "") + texto, autor="user")
         self.mensagens.append({"role": "user", "content": texto})
-        self.entrada.delete(0, "end")
+        self._limpar_entrada()
 
         # 2) trava o botão e cria o balão onde a resposta vai PINGAR ao vivo.
         self.botao.configure(state="disabled", text="...")
