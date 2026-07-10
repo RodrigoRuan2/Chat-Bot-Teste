@@ -1,12 +1,13 @@
 @echo off
 REM ==============================================================
 REM   Testar Avatar - de um duplo-clique e a janela do avatar abre.
-REM   (fase de desenvolvimento: o avatar Live2D roda SEPARADO do Yato)
+REM   (o avatar Live2D roda SEPARADO do Yato, agora em Electron -
+REM    e uma a unica forma de deixar o fundo TRANSPARENTE no Windows)
 REM ==============================================================
 
-REM Entra na pasta do projeto (caminho absoluto = funciona de qualquer lugar).
-cd /d "C:\Users\ruanc\projetos\Chat bot\yato-py"
+REM Entra na pasta do app Electron do avatar.
+cd /d "C:\Users\ruanc\projetos\Chat bot\yato-py\avatar-electron"
 
-REM Abre a janela do avatar SEM tela preta de terminal (pythonw).
-REM Se algo der errado, o motivo fica no avatar.log (mesma pasta).
-start "" ".venv\Scripts\pythonw.exe" "avatar_app.py"
+REM Abre a janela transparente do avatar (o electron.exe e um app grafico,
+REM nao abre tela preta de terminal). Fechar = tecla ESC.
+start "" "node_modules\electron\dist\electron.exe" "."

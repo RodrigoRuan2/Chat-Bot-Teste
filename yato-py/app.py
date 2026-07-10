@@ -366,7 +366,8 @@ class App(ctk.CTk):
         só abre/fecha — nunca troca a área central."""
         if modo == "avatar":
             if not avatar2d.disponivel():
-                self._bolha("Avatar indisponível — falta o pywebview ou a pasta "
+                self._bolha("Avatar indisponível — falta instalar o Electron "
+                            "(rode: npm install em avatar-electron/) ou a pasta "
                             "avatar/.", autor="dica")
                 self.toggle_view.set("💬 Chat")
                 self.modo_view = "chat"

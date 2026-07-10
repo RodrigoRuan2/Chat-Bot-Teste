@@ -1,29 +1,37 @@
 """
 O AVATAR 2D — o LADO YATO da conversa com o avatar Live2D flutuante.
 
-O avatar roda num PROCESSO separado (avatar_app.py), porque o pywebview (a
-janela) e o Tkinter (a janela do Yato) brigam pela 'main thread'. Este módulo
-é o "controle remoto" que o Yato usa:
+O avatar roda num PROCESSO separado (o app Electron em avatar-electron/), porque
+a janela do avatar e o Tkinter (a janela do Yato) não convivem no mesmo processo.
+Este módulo é o "controle remoto" que o Yato usa:
 
   • mostrar()/esconder()      → abre e fecha a janela flutuante (subprocess);
   • definir_expressao(nome)   → troca a expressão (ociosa/pensando/falando…);
   • lip_sync(forca)           → move a boca conforme a força do som (0..1).
 
-Os comandos viajam pela PONTE HTTP local que o avatar_app expõe na porta 8137
+Por que Electron (e não mais pywebview/WebView2): só o Electron faz a janela
+com FUNDO TRANSPARENTE de verdade no Windows 11 (o personagem flutua sem o
+retângulo do "card"). O WebView2 ignorava a transparência.
+
+Os comandos viajam pela PONTE HTTP local que o Electron expõe na porta 8137
 (ex.: /controle?acao=boca&valor=0.8). Se a janela está fechada, tudo é
 silenciosamente ignorado — o Yato nunca quebra por causa do avatar.
 """
 
 import logging
 import subprocess
-import sys
 import threading
 import urllib.request
 from pathlib import Path
 
 PORTA = 8137
 _URL = f"http://127.0.0.1:{PORTA}/controle"
-_SCRIPT = Path(__file__).with_name("avatar_app.py")
+
+# A pasta do app Electron e o binário do Electron (instalado pelo npm install).
+# Lançamos o electron.exe DIRETO (não o "npm start") porque assim o terminate()
+# fecha a janela de verdade — o "npm" seria um pai que deixaria o electron órfão.
+_PASTA_ELECTRON = Path(__file__).with_name("avatar-electron")
+_ELECTRON_EXE = _PASTA_ELECTRON / "node_modules" / "electron" / "dist" / "electron.exe"
 _PASTA_WEB = Path(__file__).with_name("avatar")
 
 # Estados que o avatar entende — os mesmos que o _expressao do app usa.
@@ -33,12 +41,8 @@ _processo = None   # o Popen da janela do avatar, quando aberta
 
 
 def disponivel():
-    """True se dá pra abrir o avatar: o pywebview instalado E a página existe."""
-    try:
-        import webview  # noqa: F401
-    except ImportError:
-        return False
-    return (_PASTA_WEB / "index.html").exists()
+    """True se dá pra abrir o avatar: o Electron instalado E a página existe."""
+    return _ELECTRON_EXE.exists() and (_PASTA_WEB / "index.html").exists()
 
 
 def esta_aberto():
@@ -51,9 +55,10 @@ def mostrar():
     global _processo
     if esta_aberto():
         return
-    # sys.executable = o MESMO Python do Yato (que tem o pywebview). Se o Yato
-    # foi aberto com pythonw, o avatar também abre sem terminal.
-    _processo = subprocess.Popen([sys.executable, str(_SCRIPT)])
+    # electron.exe <pasta-do-app>: o Electron carrega o main.js daquela pasta,
+    # que sobe o servidor (porta 8137) e abre a janela transparente. É um app
+    # gráfico — não abre janela de terminal.
+    _processo = subprocess.Popen([str(_ELECTRON_EXE), str(_PASTA_ELECTRON)])
 
 
 def esconder():

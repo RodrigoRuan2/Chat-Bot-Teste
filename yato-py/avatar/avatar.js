@@ -110,17 +110,5 @@ window.avatarDebug = () => ({
   contextoPerdido: app.renderer.gl ? app.renderer.gl.isContextLost() : "n/a",
 });
 
-// Fechar o mascote. Só tem efeito na janela do pywebview (onde window.pywebview
-// existe e conversa com o Python); no navegador comum de teste, fica inerte.
-function fecharAvatar() {
-  if (window.pywebview && window.pywebview.api && window.pywebview.api.fechar) {
-    window.pywebview.api.fechar();
-  }
-}
-document.getElementById("fechar").addEventListener("click", fecharAvatar);
-window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") fecharAvatar();
-});
-
 window.addEventListener("resize", encaixar);
 carregar(MODELO);   // a cara do Yato: Natori

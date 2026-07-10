@@ -21,7 +21,7 @@ personalidade.py  (o texto que diz QUEM o Yato é)
 memoria.py        (salvar/carregar a conversa no disco)
 voz.py            (fala as respostas em voz alta — Piper, offline)
 ouvido.py         (escuta o microfone e transcreve — Whisper, offline)
-avatar2d.py  ──HTTP──►  avatar_app.py  (janela Live2D flutuante, processo à parte)
+avatar2d.py  ──HTTP──►  avatar-electron/  (janela Live2D flutuante em Electron, fundo transparente)
 imagem.py    ──HTTP──►  Forge (Stable Diffusion) em http://127.0.0.1:7860  ──►  desenha
 ```
 
@@ -38,7 +38,7 @@ fácil de entender e mudar sozinha:
 | `voz.py`            | A voz: transforma a resposta em áudio (Piper) e toca — offline. |
 | `ouvido.py`         | O ouvido: grava o microfone e transcreve com o Whisper — offline. |
 | `avatar2d.py`       | O "controle remoto" do avatar: abre/fecha a janela e manda os comandos (boca, expressão). |
-| `avatar_app.py`     | A janela flutuante do avatar Live2D (roda num **processo à parte**). |
+| `avatar-electron/`  | A janela flutuante do avatar Live2D, em **Electron** (processo à parte). É a única forma de fundo **transparente** no Windows. |
 | `imagem.py`         | O estúdio de desenho: pede pro Forge gerar imagens e melhora o prompt com o cérebro. |
 
 Essa divisão é de propósito: dá pra testar o `cerebro.py` sozinho (sem abrir a
@@ -330,18 +330,22 @@ Como funciona por dentro (a parte honesta):
 
 - **Live2D roda na web** (o SDK Cubism é JavaScript). Então o avatar é uma
   página HTML (`avatar/`) que desenha o modelo com `pixi-live2d-display`,
-  aberta numa janela `pywebview`. Aqui o projeto **deixa de ser 100% Python** —
-  troca consciente pra ter um avatar de verdade. Ainda roda **local**.
-- **Processo à parte:** o `pywebview` e o Tkinter brigam pela *main thread*,
-  então o avatar (`avatar_app.py`) roda **separado**; o Yato conversa com ele
-  por uma ponte HTTP local (`avatar2d.py` → porta 8137).
+  aberta numa janela **Electron** (`avatar-electron/`). Aqui o projeto **deixa
+  de ser 100% Python** — troca consciente pra ter um avatar de verdade. Ainda
+  roda **local**.
+- **Processo à parte:** a janela do avatar e o Tkinter não convivem no mesmo
+  processo, então o avatar (o app Electron) roda **separado**; o Yato conversa
+  com ele por uma ponte HTTP local (`avatar2d.py` → porta 8137). O Electron
+  também expõe a rota `/controle` que injeta `window.setBoca()` /
+  `window.setExpressao()` na página.
 - **Lip-sync:** o `voz.py` mede a *força do som* da fala em janelas de ~55ms
   e manda pro avatar no ritmo — a boca abre nas sílabas, fecha nas pausas.
   Cada modelo declara seu parâmetro de boca (Natori usa `ParamMouthOpenY`,
   a Mao usa `ParamA`); o código lê o grupo `LipSync` de cada um.
-- **Transparência:** o WebView2 no Windows 11 não compõe fundo transparente
-  (dá branco), então o avatar fica num **card justo** ao personagem, opaco —
-  e o mouse nunca buga.
+- **Transparência:** o WebView2 (pywebview) no Windows 11 **não** compunha
+  fundo transparente (dava um retângulo opaco). Por isso a janela migrou pro
+  **Electron**, que compõe transparência de verdade — agora só o personagem
+  flutua, sem card. Arrastar o personagem move a janela; fechar é a tecla ESC.
 - **Modelos de teste:** por enquanto usa modelos de exemplo da Live2D (Natori,
   Mao) — são **manequins**; o Yato riggado entra no lugar no futuro. As libs e
   os modelos vêm de **CDN** (precisa de internet na 1ª vez; um passo futuro é
@@ -472,18 +476,21 @@ O projeto evolui em **rodadas** — cada uma vira um commit com nome claro.
 - [x] **Ouvir** (Whisper local) — feito na Rodada 10 👇
 
 ### ✅ Rodada 9 — Avatar 2D flutuante (Live2D) 🎭
-- [x] Janela flutuante (`pywebview`) renderizando Live2D (`pixi-live2d-display`
-      + PIXI 6 + Cubism Core), num **processo à parte** (evita a briga de
-      main thread com o Tkinter)
-- [x] Ponte HTTP local (`avatar2d.py` → `avatar_app.py`): o Yato abre/fecha a
-      janela e manda comandos (boca, expressão)
+- [x] Janela flutuante renderizando Live2D (`pixi-live2d-display` + PIXI 6 +
+      Cubism Core), num **processo à parte** (evita a briga de main thread com
+      o Tkinter). Começou em `pywebview`; migrou pro **Electron** pela
+      transparência (ver abaixo)
+- [x] Ponte HTTP local (`avatar2d.py` → `avatar-electron/`): o Yato abre/fecha
+      a janela e manda comandos (boca, expressão) pela rota `/controle`
 - [x] **Lip-sync de verdade**: o `voz.py` mede a força do som e a boca segue
       o áudio (lê o grupo `LipSync` de cada modelo — Natori/Mao usam nomes
       diferentes de parâmetro)
-- [x] Enquadramento tipo VTuber (zoom no busto) + card justo (a transparência
-      não rola no WebView2/Win11) + mascote sem-moldura, arrastável, com ✕/ESC
+- [x] Enquadramento tipo VTuber (zoom no busto) + mascote sem-moldura,
+      arrastável (arrasta o personagem), fecha no ESC
+- [x] **Fundo transparente de verdade** (Electron): só o personagem flutua, sem
+      card — o WebView2/Win11 não compunha transparência; o Electron sim
 - [x] Integrado ao toggle **Chat/Avatar** (o palco de imagem estática se aposentou)
-- [ ] Baixar libs + modelo pra local (voltar a ser offline de verdade)
+- [x] Baixar libs + modelo pra local (o avatar roda offline)
 - [ ] O grande final: **riggar o próprio Yato** — agora em **Inochi2D** (gratuito
       e sem limites), pra ele entrar no lugar dos manequins (Natori/Mao)
 

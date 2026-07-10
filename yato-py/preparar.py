@@ -156,6 +156,19 @@ def passo_avatar():
                 caminhos.append(m["File"])
         for c in caminhos:
             _baixar(BASE_MODELO + c, modelo / c)
+
+    # A JANELA do avatar roda em Electron (única forma de fundo transparente de
+    # verdade no Windows). Precisa do npm install pra baixar o próprio Electron.
+    pasta_electron = RAIZ / "avatar-electron"
+    if (pasta_electron / "node_modules").exists():
+        print("  Electron do avatar já instalado — ok")
+    elif shutil.which("npm") is None:
+        print("  !! npm (Node.js) NÃO encontrado — o avatar flutuante não vai abrir.")
+        print("     Instale o Node.js em https://nodejs.org e rode de novo.")
+    else:
+        print("  instalando o Electron (npm install em avatar-electron/) ...")
+        subprocess.run(["npm", "install"], cwd=str(pasta_electron),
+                       shell=True, check=True)
     print("  avatar pronto  OK")
 
 

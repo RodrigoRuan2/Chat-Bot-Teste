@@ -1,0 +1,12 @@
+{
+  "name": "yato-avatar-electron",
+  "version": "1.0.0",
+  "description": "Janela do avatar Live2D do Yato via Electron (transparencia real)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^43.1.0"
+  }
+}

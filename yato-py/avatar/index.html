@@ -19,13 +19,13 @@
   <script src="lib/cubism4.min.js"></script>
 </head>
 <body>
-  <!-- Fechar o mascote (só funciona na janela sem-moldura; no navegador é
-       inerte, mas não atrapalha). -->
-  <button id="fechar" title="Fechar (ESC)">✕</button>
+  <!-- O "palco" onde o personagem é desenhado. (Fechar = tecla ESC, tratada
+       direto no Electron — sem botão na tela.) -->
+  <canvas id="palco"></canvas>
 
-  <!-- O "palco" onde o personagem é desenhado. A classe pywebview-drag-region
-       faz ARRASTAR O PERSONAGEM mover a janela toda (comportamento de mascote). -->
-  <canvas id="palco" class="pywebview-drag-region"></canvas>
+  <!-- Camada transparente por cima do canvas: é ela que arrasta a janela
+       (no Electron). Fica ABAIXO do botão ✕ no z-index, pra ele furar. -->
+  <div id="arraste"></div>
 
   <!-- Nossa lógica: carregar e controlar o avatar -->
   <script src="avatar.js"></script>
