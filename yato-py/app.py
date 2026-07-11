@@ -737,8 +737,11 @@ class App(ctk.CTk):
         self.rotulo_imagem_gerada.pack(fill="both", expand=True)
         # BUG DA IMAGEM CORRIGIDO: em vez de medir o painel só uma vez (que dava
         # tamanho errado se o layout não tinha assentado), re-encaixo a imagem
-        # TODA vez que o painel muda de tamanho (evento <Configure>).
-        self.rotulo_imagem_gerada.bind("<Configure>", lambda e: self._reencaixar_imagem())
+        # quando o painel muda de tamanho (evento <Configure>) — com DEBOUNCE:
+        # arrastar a borda da janela dispara dezenas de <Configure> por segundo,
+        # e cada encaixe relê o PNG do disco; então espero 100ms de "silêncio" e
+        # encaixo UMA vez, quando você solta o mouse.
+        self.rotulo_imagem_gerada.bind("<Configure>", self._agendar_reencaixe)
         self.status_imagem = ctk.CTkLabel(
             self.painel_imagem, text="", font=ctk.CTkFont(size=11), text_color="#8a8aa0")
         self.status_imagem.pack(fill="x", pady=(6, 0))
@@ -768,7 +771,11 @@ class App(ctk.CTk):
         # ---- estado + primeira carga dos favoritos ----
         self._pagina_favoritos = 0
         self._cards_preset = {}        # id -> card (pra marcar o selecionado)
-        self._thumbs_preset = []       # segura as PhotoImage vivas (senão o Tk as esquece)
+        # Cache de miniaturas: ler o PNG + reduzir (LANCZOS) custa; sem cache,
+        # CADA troca de página refazia o trabalho todo. Aqui cada miniatura é
+        # feita UMA vez (o dict também segura as PhotoImage vivas — senão o Tk
+        # as esquece e elas somem da tela).
+        self._cache_thumbs = {}        # nome do arquivo de ref -> PhotoImage
         self._preset_escolhido = None  # o preset (dict) escolhido agora
         self._img_grande_path = None   # imagem exibida agora (pro re-encaixe no resize)
         self._imagem_gerada_ctk = None
@@ -787,13 +794,18 @@ class App(ctk.CTk):
             self.painel_imagem.pack(fill="both", expand=True)
             self._reencaixar_imagem()   # o painel pode ter mudado enquanto oculto
 
+    def _ir_para_aba_imagem(self):
+        """Traz a aba 🖼️ Imagem pra frente (usado ao escolher um favorito e ao
+        terminar uma geração — o resultado sempre aparece pra você)."""
+        self.abas_dir.set("🖼️ Imagem")
+        self._trocar_aba_dir("🖼️ Imagem")
+
     def _recarregar_favoritos(self):
         """Lê os presets do disco e (re)desenha os cards da galeria. Chamado no
         início e toda vez que um favorito é adicionado."""
         for filho in self.galeria_favoritos.winfo_children():
             filho.destroy()
         self._cards_preset = {}
-        self._thumbs_preset = []
 
         lista = presets.carregar()
         if not lista:
@@ -839,18 +851,18 @@ class App(ctk.CTk):
         thumb = None
         ref = preset.get("referencia")
         if ref:
+            thumb = self._cache_thumbs.get(ref)   # já fizemos essa? reusa
             caminho = presets.PASTA_REFS / ref
-            if caminho.exists():
+            if thumb is None and caminho.exists():
                 try:
                     img = Image.open(caminho).convert("RGBA")
                     # Encaixa na moldura mantendo a proporção (quadrado fica
-                    # quadrado, retrato fica retrato) — nada de esticar. Agora
-                    # MAIOR, porque o card ganhou o painel direito inteiro.
+                    # quadrado, retrato fica retrato) — nada de esticar.
                     razao = min(206 / img.width, 116 / img.height)
                     tam = (max(1, int(img.width * razao)), max(1, int(img.height * razao)))
                     # PhotoImage + LANCZOS: downscale suave e nítido.
                     thumb = ImageTk.PhotoImage(img.resize(tam, Image.LANCZOS))
-                    self._thumbs_preset.append(thumb)   # mantém a referência viva
+                    self._cache_thumbs[ref] = thumb
                 except (OSError, ValueError):
                     thumb = None
 
@@ -928,11 +940,8 @@ class App(ctk.CTk):
             for card in self._cards_preset.values():
                 card.configure(border_color="#34343f", border_width=1)
             self.campo_prompt.delete("1.0", "end")
-            # Volta o painel da direita pro placeholder (tira a referência).
-            self._img_grande_path = None
-            self._imagem_gerada_ctk = None
-            self.rotulo_imagem_gerada.configure(
-                image=None, text="🖼️ a imagem gerada / referência aparece aqui")
+            self.campo_personagem.delete(0, "end")   # limpa TUDO, sem sobra
+            self._limpar_imagem_grande()   # volta o painel pro placeholder
             self.status_imagem.configure(text="Seleção limpa.")
             return
         self._preset_escolhido = preset
@@ -956,15 +965,11 @@ class App(ctk.CTk):
         # Clicar num favorito PULA pra aba Imagem (pra você ver a referência
         # grande e já gerar). Troca a aba ANTES de exibir, pra o painel já estar
         # visível e medido quando a imagem for encaixada.
-        self.abas_dir.set("🖼️ Imagem")
-        self._trocar_aba_dir("🖼️ Imagem")
+        self._ir_para_aba_imagem()
         if ref_existe := (ref and (presets.PASTA_REFS / ref).exists()):
             self._exibir_imagem_grande(presets.PASTA_REFS / ref)
         else:
-            self._img_grande_path = None
-            self._imagem_gerada_ctk = None
-            self.rotulo_imagem_gerada.configure(
-                image=None, text="🖼️ a imagem gerada / referência aparece aqui")
+            self._limpar_imagem_grande()
         info_modelo = (f" · {self._nome_amigavel_modelo(preset['modelo'])}"
                        if preset.get("modelo") else "")
         rotulo = "Referência" if ref_existe else "Base"
@@ -991,6 +996,10 @@ class App(ctk.CTk):
         if not messagebox.askyesno("Apagar favorito", f'Apagar "{preset["nome"]}"?'):
             return
         presets.remover(preset["id"])
+        # Tira a miniatura do cache: se o mesmo id renascer depois com OUTRA
+        # imagem, não pode aparecer a antiga.
+        if preset.get("referencia"):
+            self._cache_thumbs.pop(preset["referencia"], None)
         if self._preset_escolhido and self._preset_escolhido["id"] == preset["id"]:
             self._preset_escolhido = None
             self.campo_prompt.delete("1.0", "end")
@@ -1036,12 +1045,13 @@ class App(ctk.CTk):
             self.seletor_lora.set("(nenhum na pasta)")
 
     def _atualizar_peso_lora(self, valor):
-        """Mostra o peso do LoRA (0.0–2.0) ao lado do slider."""
+        """Mostra o peso do LoRA (0.0–1.0) ao lado do slider."""
         self.rotulo_peso_lora.configure(text=f"{float(valor):.1f}")
 
     def _adicionar_lora(self):
         """Injeta <lora:nome:peso> no fim do prompt — o mesmo que digitar na mão,
-        mas sem errar o nome. Dá pra adicionar vários (é só repetir)."""
+        mas sem errar o nome. Se ESSE LoRA já está no prompt, só ATUALIZA o peso
+        (clicar 2x não duplica); LoRAs diferentes podem ser empilhados."""
         nome = self.seletor_lora.get()
         if not nome or nome.startswith("("):
             self.status_imagem.configure(text="Nenhum LoRA na pasta pra adicionar.")
@@ -1049,9 +1059,16 @@ class App(ctk.CTk):
         peso = round(self.peso_lora.get(), 1)
         tag = f"<lora:{nome}:{peso}>"
         atual = self.campo_prompt.get("1.0", "end").strip()
+        ja_tinha = re.search(rf"<lora:{re.escape(nome)}:[0-9.]+>", atual)
+        if ja_tinha:
+            novo = atual.replace(ja_tinha.group(0), tag)
+            aviso = f"LoRA atualizado: {nome} ({peso})"
+        else:
+            novo = f"{atual}, {tag}" if atual else tag
+            aviso = f"LoRA adicionado: {nome} ({peso})"
         self.campo_prompt.delete("1.0", "end")
-        self.campo_prompt.insert("1.0", f"{atual}, {tag}" if atual else tag)
-        self.status_imagem.configure(text=f"LoRA adicionado: {nome} ({peso})")
+        self.campo_prompt.insert("1.0", novo)
+        self.status_imagem.configure(text=aviso)
 
     def _favoritar_click(self):
         """Salva a última imagem gerada como um novo favorito. Pergunta só o
@@ -1181,6 +1198,26 @@ class App(ctk.CTk):
         self._ultimo_encaixe = None   # força recalcular
         self._reencaixar_imagem()
 
+    def _agendar_reencaixe(self, _evento=None):
+        """Debounce do <Configure>: cancela o agendamento anterior e marca um
+        novo pra daqui 100ms — só o ÚLTIMO evento da rajada encaixa de fato."""
+        if getattr(self, "_reencaixe_agendado", None):
+            self.after_cancel(self._reencaixe_agendado)
+        self._reencaixe_agendado = self.after(100, self._reencaixar_imagem)
+
+    def _limpar_imagem_grande(self):
+        """Volta o painel direito pro placeholder de texto. O detalhe IMPORTANTE:
+        configure(image=None) do CustomTkinter NÃO limpa a imagem no tk por
+        baixo — quando o Python coleta a CTkImage antiga, o rótulo fica com uma
+        referência morta e QUALQUER configure depois estoura ('pyimage não
+        existe'). Por isso limpamos direto no rótulo tk interno também."""
+        self._img_grande_path = None
+        self._ultimo_encaixe = None
+        self._imagem_gerada_ctk = None
+        self.rotulo_imagem_gerada._label.configure(image="")   # limpa no tk de verdade
+        self.rotulo_imagem_gerada.configure(
+            image=None, text="🖼️ a imagem gerada / referência aparece aqui")
+
     def _reencaixar_imagem(self, _tentativa=0):
         """Redimensiona a imagem ATUAL pra caber no painel, medindo o tamanho
         REAL dele agora, sem distorcer. Chamado ao exibir e a cada <Configure>.
@@ -1215,8 +1252,7 @@ class App(ctk.CTk):
     def _imagem_pronta(self, caminho, prompt=""):
         """Mostra a imagem GERADA no painel grande (pulando pra aba Imagem, caso
         você estivesse nos Favoritos) e guarda caminho + prompt (pro ⭐ Favoritar)."""
-        self.abas_dir.set("🖼️ Imagem")
-        self._trocar_aba_dir("🖼️ Imagem")
+        self._ir_para_aba_imagem()
         self._exibir_imagem_grande(caminho)
         self.status_imagem.configure(text=f"pronto — salvo em {caminho.name}")
         self._ultima_imagem = caminho

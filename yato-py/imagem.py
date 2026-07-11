@@ -63,6 +63,11 @@ NEGATIVO_PADRAO = (
     "worst quality, low quality, blurry, bad anatomy, bad hands, "
     "(text, watermark, signature, username, logo, speech bubble:1.3)"
 )
+# CFG = quanto o modelo OBEDECE ao prompt (baixo = mais liberdade criativa,
+# alto = mais literal porém "queimado"). 5 é o recomendado pro Illustrious.
+# Constante aqui em cima = o "botão de qualidade" já tem lugar pra quando a
+# gente for mexer em passos/resolução.
+CFG_PADRAO = 5
 
 _PROMPT_SISTEMA_MELHORAR = f"""Você traduz descrições em português para prompts de
 geração de imagem em INGLÊS, no estilo de tags separadas por vírgula (padrão
@@ -263,10 +268,12 @@ def liberar_vram_ollama():
         pass   # Ollama fechado ou ocupado — a geração tenta mesmo assim
 
 
-def melhorar_prompt(descricao_pt):
-    """Usa o cérebro (qwen2.5) pra traduzir sua descrição em português pra um
-    prompt em inglês, com as tags de qualidade do Nova Anime XL. Devolve o
-    prompt pronto — você ainda pode editar antes de gerar."""
+def _perguntar_cerebro(sistema, usuario, num_predict, temperatura, timeout,
+                       erro_falha):
+    """O MIOLO comum das três tarefas de prompt (melhorar / personagem / molde):
+    manda uma pergunta ao Ollama e devolve o texto da resposta. As três só
+    diferem no system prompt e nos números — o request, os erros e a extração
+    são IDÊNTICOS, então moram aqui uma vez só (mudar o cérebro = mudar aqui)."""
     try:
         r = requests.post(
             OLLAMA_URL,
@@ -275,21 +282,30 @@ def melhorar_prompt(descricao_pt):
                 "stream": False,
                 "keep_alive": "10m",   # ele segue disponível pro chat depois
                 "messages": [
-                    {"role": "system", "content": _PROMPT_SISTEMA_MELHORAR},
-                    {"role": "user", "content": descricao_pt},
+                    {"role": "system", "content": sistema},
+                    {"role": "user", "content": usuario},
                 ],
-                "options": {"num_predict": 250, "temperature": 0.6},
+                "options": {"num_predict": num_predict, "temperature": temperatura},
             },
-            timeout=120,
+            timeout=timeout,
         )
         r.raise_for_status()
     except requests.exceptions.ConnectionError:
         raise ImagemError("Meu cérebro tá desligado 💀 (abre o Ollama e tenta de novo)")
     except requests.exceptions.RequestException as erro:
-        logging.warning("melhorar_prompt falhou: %s", erro)
-        raise ImagemError("Não consegui melhorar o prompt — tenta de novo?")
+        logging.warning("cérebro (imagem) falhou: %s", erro)
+        raise ImagemError(erro_falha)
+    return r.json().get("message", {}).get("content", "").strip()
 
-    texto = r.json().get("message", {}).get("content", "").strip()
+
+def melhorar_prompt(descricao_pt):
+    """Usa o cérebro (qwen2.5) pra traduzir sua descrição em português pra um
+    prompt em inglês, com as tags de qualidade do Nova Anime XL. Devolve o
+    prompt pronto — você ainda pode editar antes de gerar."""
+    texto = _perguntar_cerebro(
+        _PROMPT_SISTEMA_MELHORAR, descricao_pt,
+        num_predict=250, temperatura=0.6, timeout=120,
+        erro_falha="Não consegui melhorar o prompt — tenta de novo?")
     if not texto:
         raise ImagemError("O cérebro não devolveu nada — tenta descrever de outro jeito?")
     return texto
@@ -302,32 +318,14 @@ def personagem_para_tags(pedido_pt):
     Devolve a tag (string). Levanta ImagemError se o cérebro estiver fora."""
     if not pedido_pt or not pedido_pt.strip():
         return ""
-    try:
-        r = requests.post(
-            OLLAMA_URL,
-            json={
-                "model": MODELO,
-                "stream": False,
-                "keep_alive": "10m",
-                "messages": [
-                    {"role": "system", "content": _PROMPT_SISTEMA_PERSONAGEM},
-                    {"role": "user", "content": pedido_pt},
-                ],
-                # Tarefa curta e determinística: poucos tokens, temperatura baixa
-                # (queremos SEMPRE a mesma tag pro mesmo personagem, sem invenção).
-                "options": {"num_predict": 60, "temperature": 0.3},
-            },
-            timeout=60,
-        )
-        r.raise_for_status()
-    except requests.exceptions.ConnectionError:
-        raise ImagemError("Meu cérebro tá desligado 💀 (abre o Ollama e tenta de novo)")
-    except requests.exceptions.RequestException as erro:
-        logging.warning("personagem_para_tags falhou: %s", erro)
-        raise ImagemError("Não consegui traduzir o personagem — tenta de novo?")
-
+    # Poucos tokens e temperatura baixa: tarefa curta e determinística (queremos
+    # SEMPRE a mesma tag pro mesmo personagem, sem invenção).
+    texto = _perguntar_cerebro(
+        _PROMPT_SISTEMA_PERSONAGEM, pedido_pt,
+        num_predict=60, temperatura=0.3, timeout=60,
+        erro_falha="Não consegui traduzir o personagem — tenta de novo?")
     # Limpa sujeira comum: aspas, ponto final, quebras de linha.
-    return r.json().get("message", {}).get("content", "").strip().strip('".').replace("\n", " ")
+    return texto.strip('".').replace("\n", " ")
 
 
 # O FILTRO DE APARÊNCIA (determinístico): o cérebro é bom em RECONHECER o nome do
@@ -395,29 +393,10 @@ def generalizar_prompt(prompt_en):
     filtro no código tira as tags de APARÊNCIA (o que o cérebro faz mal)."""
     if not prompt_en or not prompt_en.strip():
         raise ImagemError("Sem prompt pra virar molde — escolha ou gere algo antes.")
-    try:
-        r = requests.post(
-            OLLAMA_URL,
-            json={
-                "model": MODELO,
-                "stream": False,
-                "keep_alive": "10m",
-                "messages": [
-                    {"role": "system", "content": _PROMPT_SISTEMA_GENERALIZAR},
-                    {"role": "user", "content": prompt_en},
-                ],
-                "options": {"num_predict": 300, "temperature": 0.4},
-            },
-            timeout=90,
-        )
-        r.raise_for_status()
-    except requests.exceptions.ConnectionError:
-        raise ImagemError("Meu cérebro tá desligado 💀 (abre o Ollama e tenta de novo)")
-    except requests.exceptions.RequestException as erro:
-        logging.warning("generalizar_prompt falhou: %s", erro)
-        raise ImagemError("Não consegui virar molde — tenta de novo?")
-
-    texto = r.json().get("message", {}).get("content", "").strip().strip('"')
+    texto = _perguntar_cerebro(
+        _PROMPT_SISTEMA_GENERALIZAR, prompt_en,
+        num_predict=300, temperatura=0.4, timeout=90,
+        erro_falha="Não consegui virar molde — tenta de novo?").strip('"')
     if not texto:
         raise ImagemError("O cérebro não devolveu o molde — tenta de novo?")
     # Rede de segurança: se o cérebro esquecer o slot, põe na frente.
@@ -444,7 +423,7 @@ def gerar(prompt, negativo=None, passos=25, largura=768, altura=768):
                 "steps": passos,
                 "width": largura,
                 "height": altura,
-                "cfg_scale": 5,
+                "cfg_scale": CFG_PADRAO,
             },
             # A geração de imagem demora (~15-30s no SDXL); generoso de propósito.
             timeout=180,
@@ -465,6 +444,8 @@ def gerar(prompt, negativo=None, passos=25, largura=768, altura=768):
         raise ImagemError("O Forge respondeu mas não veio nenhuma imagem — estranho.")
 
     PASTA_IMAGENS.mkdir(exist_ok=True)
-    caminho = PASTA_IMAGENS / f"yato_{int(time.time())}.png"
+    # Milissegundos no nome: duas gerações no MESMO segundo não se sobrescrevem
+    # (com segundos, um lote rápido apagaria a imagem anterior).
+    caminho = PASTA_IMAGENS / f"yato_{int(time.time() * 1000)}.png"
     caminho.write_bytes(base64.b64decode(imagens[0]))
     return caminho

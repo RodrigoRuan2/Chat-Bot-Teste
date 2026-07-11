@@ -132,8 +132,11 @@ def remover(id_):
     salvar_meus([p for p in meus if p["id"] != id_])
     ref = alvo.get("referencia")
     if ref:
+        # missing_ok já cobre "arquivo não existe"; o except fica SÓ pro caso
+        # raro de permissão/arquivo em uso — apagar a miniatura não pode impedir
+        # de apagar o favorito.
         try:
-            (PASTA_REFS / ref).unlink(missing_ok=True)   # apaga a miniatura junto
+            (PASTA_REFS / ref).unlink(missing_ok=True)
         except OSError:
             pass
     return True
