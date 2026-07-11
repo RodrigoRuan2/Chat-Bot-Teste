@@ -579,6 +579,7 @@ class App(ctk.CTk):
             self._area_chat_visivel(False)
             self.view_imagem.pack(fill="both", expand=True, padx=12, pady=(0, 12))
             self._atualizar_lista_modelos()   # reflete o que está no Forge AGORA
+            self._recarregar_loras()          # pega LoRAs novos na pasta
         else:
             self.modo_view = "chat"
             self.view_imagem.pack_forget()
@@ -649,39 +650,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(topo, text="Tamanho:",
                      font=ctk.CTkFont(size=11)).pack(side="right", padx=(0, 6))
 
-        # ---- ⭐ FAVORITOS: faixa de LARGURA TOTAL (fileira única, paginada) ----
-        # Fica FORA das colunas pra NÃO espremer os controles. Sem rolagem (o
-        # CTkScrollableFrame buga imagens); a paginação ◀ ▶ dá conta de tudo.
-        cab_fav = ctk.CTkFrame(v, fg_color="transparent")
-        cab_fav.pack(fill="x", pady=(0, 2))
-        ctk.CTkLabel(cab_fav, text="⭐ Favoritos — clique pra usar de base:",
-                     font=ctk.CTkFont(size=12)).pack(side="left")
-        self.rotulo_pagina = ctk.CTkLabel(cab_fav, text="", font=ctk.CTkFont(size=11),
-                                          text_color="#8a8aa0")
-        self.rotulo_pagina.pack(side="right")
-
-        faixa = ctk.CTkFrame(v, fg_color="transparent")
-        faixa.pack(fill="x", pady=(0, 10))
-        self.btn_pag_ant = ctk.CTkButton(faixa, text="◀", width=30, height=126,
-                                          fg_color="transparent", border_width=1,
-                                          command=self._pagina_anterior)
-        self.btn_pag_ant.pack(side="left", padx=(0, 6))
-        self.btn_pag_prox = ctk.CTkButton(faixa, text="▶", width=30, height=126,
-                                           fg_color="transparent", border_width=1,
-                                           command=self._pagina_proxima)
-        self.btn_pag_prox.pack(side="right", padx=(6, 0))
-        self.galeria_favoritos = ctk.CTkFrame(faixa, fg_color="#20202c", corner_radius=8)
-        self.galeria_favoritos.pack(side="left", fill="both", expand=True)
-        for c in range(5):
-            self.galeria_favoritos.grid_columnconfigure(c, weight=1)
-        self._pagina_favoritos = 0
-        self._cards_preset = {}        # id -> card (pra marcar o selecionado)
-        self._thumbs_preset = []       # segura as PhotoImage vivas (senão o Tk as esquece)
-        self._preset_escolhido = None  # o preset (dict) escolhido agora
-        presets.preencher_modelos_faltando()   # backfill do modelo nos favoritos antigos
-        self._recarregar_favoritos()
-
-        # ---- CORPO: duas colunas (controles | imagem) ----
+        # ---- CORPO: duas colunas (controles | painel de abas) ----
         corpo = ctk.CTkFrame(v, fg_color="transparent")
         corpo.pack(fill="both", expand=True)
         # Coluna esquerda de largura FIXA (pack_propagate(False) faz ela respeitar
@@ -701,7 +670,7 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(col_esq, text="Prompt (inglês — pode editar antes de gerar):",
                      font=ctk.CTkFont(size=12), anchor="w").pack(fill="x", pady=(0, 4))
-        self.campo_prompt = ctk.CTkTextbox(col_esq, height=150)
+        self.campo_prompt = ctk.CTkTextbox(col_esq, height=118)
         self.campo_prompt.pack(fill="x")
 
         linha_molde = ctk.CTkFrame(col_esq, fg_color="transparent")
@@ -711,6 +680,26 @@ class App(ctk.CTk):
                       font=ctk.CTkFont(size=11), command=self._virar_molde_click).pack(side="left")
         ctk.CTkLabel(linha_molde, text="reusa o estilo com outro personagem",
                      font=ctk.CTkFont(size=10), text_color="#6a6a80").pack(side="left", padx=8)
+
+        # ---- LoRA: escolhe da pasta + peso, e injeta <lora:nome:peso> no prompt
+        linha_lora = ctk.CTkFrame(col_esq, fg_color="#1f1f2a", corner_radius=8)
+        linha_lora.pack(fill="x", pady=(8, 0))
+        ctk.CTkLabel(linha_lora, text="LoRA:", font=ctk.CTkFont(size=11),
+                     text_color="#8a8aa0").pack(side="left", padx=(8, 4), pady=6)
+        self.seletor_lora = ctk.CTkOptionMenu(
+            linha_lora, values=["(nenhum)"], width=132, font=ctk.CTkFont(size=11))
+        self.seletor_lora.pack(side="left", pady=6)
+        ctk.CTkButton(linha_lora, text="➕", width=30,
+                      command=self._adicionar_lora).pack(side="right", padx=(4, 8), pady=6)
+        self.rotulo_peso_lora = ctk.CTkLabel(linha_lora, text="0.8",
+                                             font=ctk.CTkFont(size=10), width=24)
+        self.rotulo_peso_lora.pack(side="right")
+        # Trava em 0 → 1.0 (força cheia): acima de 1.0 costuma "queimar"/distorcer.
+        self.peso_lora = ctk.CTkSlider(linha_lora, from_=0, to=1, number_of_steps=10,
+                                       width=78, command=self._atualizar_peso_lora)
+        self.peso_lora.set(0.8)
+        self.peso_lora.pack(side="right", padx=(6, 2), pady=6)
+        self._recarregar_loras()
 
         linha_livre = ctk.CTkFrame(col_esq, fg_color="#1f1f2a", corner_radius=8)
         linha_livre.pack(fill="x", pady=(8, 10))
@@ -732,24 +721,71 @@ class App(ctk.CTk):
         ctk.CTkButton(linha_gerar, text="📁", width=40, fg_color="transparent",
                       border_width=1, command=self._abrir_pasta_imagens).pack(side="right")
 
-        # ===== DIREITA: imagem GRANDE + status =====
-        # (CTkImage guardada em self._imagem_gerada_ctk — sem a referência viva,
-        # o Tkinter "esquece" a imagem e ela some.)
-        # corner_radius=0 (quadrado): a imagem é retangular, então canto
-        # arredondado deixaria um "buraco" mostrando o fundo nos cantos.
+        # ===== DIREITA: painel com ABAS [🖼️ Imagem | ⭐ Favoritos] =====
+        # Um espaço, dois usos: a imagem grande OU a galeria de favoritos. Cada
+        # aba usa o painel inteiro, então nada fica apertado.
+        self.abas_dir = ctk.CTkSegmentedButton(
+            col_dir, values=["🖼️ Imagem", "⭐ Favoritos"], command=self._trocar_aba_dir)
+        self.abas_dir.set("🖼️ Imagem")
+        self.abas_dir.pack(fill="x", pady=(0, 6))
+
+        # -- painel IMAGEM (corner_radius=0: imagem retangular, sem "buraco") --
+        self.painel_imagem = ctk.CTkFrame(col_dir, fg_color="transparent")
         self.rotulo_imagem_gerada = ctk.CTkLabel(
-            col_dir, text="🖼️ a imagem gerada / referência aparece aqui",
-            text_color="#6a6a80", fg_color="#14141c", corner_radius=0,
-        )
+            self.painel_imagem, text="🖼️ a imagem gerada / referência aparece aqui",
+            text_color="#6a6a80", fg_color="#14141c", corner_radius=0)
         self.rotulo_imagem_gerada.pack(fill="both", expand=True)
+        # BUG DA IMAGEM CORRIGIDO: em vez de medir o painel só uma vez (que dava
+        # tamanho errado se o layout não tinha assentado), re-encaixo a imagem
+        # TODA vez que o painel muda de tamanho (evento <Configure>).
+        self.rotulo_imagem_gerada.bind("<Configure>", lambda e: self._reencaixar_imagem())
         self.status_imagem = ctk.CTkLabel(
-            col_dir, text="", font=ctk.CTkFont(size=11), text_color="#8a8aa0",
-        )
+            self.painel_imagem, text="", font=ctk.CTkFont(size=11), text_color="#8a8aa0")
         self.status_imagem.pack(fill="x", pady=(6, 0))
 
+        # -- painel FAVORITOS (grade 2 colunas + paginação, sem rolagem) --
+        self.painel_favoritos = ctk.CTkFrame(col_dir, fg_color="transparent")
+        self.galeria_favoritos = ctk.CTkFrame(
+            self.painel_favoritos, fg_color="#20202c", corner_radius=8)
+        self.galeria_favoritos.pack(fill="both", expand=True)
+        self.galeria_favoritos.grid_columnconfigure((0, 1), weight=1)
+        barra_pag = ctk.CTkFrame(self.painel_favoritos, fg_color="transparent")
+        barra_pag.pack(fill="x", pady=(6, 0))
+        self.btn_pag_ant = ctk.CTkButton(barra_pag, text="◀", width=40, height=26,
+                                          fg_color="transparent", border_width=1,
+                                          command=self._pagina_anterior)
+        self.btn_pag_ant.pack(side="left")
+        self.btn_pag_prox = ctk.CTkButton(barra_pag, text="▶", width=40, height=26,
+                                           fg_color="transparent", border_width=1,
+                                           command=self._pagina_proxima)
+        self.btn_pag_prox.pack(side="right")
+        self.rotulo_pagina = ctk.CTkLabel(barra_pag, text="", font=ctk.CTkFont(size=11),
+                                          text_color="#8a8aa0")
+        self.rotulo_pagina.pack()
+
+        self.painel_imagem.pack(fill="both", expand=True)   # começa na aba Imagem
+
+        # ---- estado + primeira carga dos favoritos ----
+        self._pagina_favoritos = 0
+        self._cards_preset = {}        # id -> card (pra marcar o selecionado)
+        self._thumbs_preset = []       # segura as PhotoImage vivas (senão o Tk as esquece)
+        self._preset_escolhido = None  # o preset (dict) escolhido agora
+        self._img_grande_path = None   # imagem exibida agora (pro re-encaixe no resize)
         self._imagem_gerada_ctk = None
-        self._ultima_imagem = None   # Path da última imagem gerada (pro Favoritar)
-        self._ultimo_prompt = ""     # o prompt final usado (pro Favoritar)
+        self._ultima_imagem = None     # Path da última imagem gerada (pro Favoritar)
+        self._ultimo_prompt = ""       # o prompt final usado (pro Favoritar)
+        presets.preencher_modelos_faltando()   # backfill do modelo nos favoritos antigos
+        self._recarregar_favoritos()
+
+    def _trocar_aba_dir(self, valor):
+        """Alterna o painel direito entre a imagem e a galeria de favoritos."""
+        if "Favoritos" in valor:
+            self.painel_imagem.pack_forget()
+            self.painel_favoritos.pack(fill="both", expand=True)
+        else:
+            self.painel_favoritos.pack_forget()
+            self.painel_imagem.pack(fill="both", expand=True)
+            self._reencaixar_imagem()   # o painel pode ter mudado enquanto oculto
 
     def _recarregar_favoritos(self):
         """Lê os presets do disco e (re)desenha os cards da galeria. Chamado no
@@ -765,14 +801,14 @@ class App(ctk.CTk):
                 self.galeria_favoritos,
                 text="nenhum favorito ainda — gere e clique em ⭐",
                 font=ctk.CTkFont(size=11), text_color="#6a6a80",
-            ).grid(row=0, column=0, columnspan=5, padx=8, pady=30)
+            ).grid(row=0, column=0, columnspan=2, padx=8, pady=40)
             self.btn_pag_ant.configure(state="disabled")
             self.btn_pag_prox.configure(state="disabled")
             self.rotulo_pagina.configure(text="")
             return
 
-        # Só a página atual vai pra tela (fileira única, sem rolagem).
-        POR_PAGINA = 5
+        # Só a página atual vai pra tela (grade 2 colunas, sem rolagem).
+        POR_PAGINA = 4
         total_paginas = (len(lista) + POR_PAGINA - 1) // POR_PAGINA
         self._pagina_favoritos = max(0, min(self._pagina_favoritos, total_paginas - 1))
         inicio = self._pagina_favoritos * POR_PAGINA
@@ -808,8 +844,9 @@ class App(ctk.CTk):
                 try:
                     img = Image.open(caminho).convert("RGBA")
                     # Encaixa na moldura mantendo a proporção (quadrado fica
-                    # quadrado, retrato fica retrato) — nada de esticar.
-                    razao = min(148 / img.width, 76 / img.height)
+                    # quadrado, retrato fica retrato) — nada de esticar. Agora
+                    # MAIOR, porque o card ganhou o painel direito inteiro.
+                    razao = min(206 / img.width, 116 / img.height)
                     tam = (max(1, int(img.width * razao)), max(1, int(img.height * razao)))
                     # PhotoImage + LANCZOS: downscale suave e nítido.
                     thumb = ImageTk.PhotoImage(img.resize(tam, Image.LANCZOS))
@@ -818,15 +855,15 @@ class App(ctk.CTk):
                     thumb = None
 
         card = ctk.CTkFrame(
-            self.galeria_favoritos, width=158, height=126, corner_radius=8,
+            self.galeria_favoritos, width=224, height=192, corner_radius=8,
             fg_color="#2a2a38", border_width=1, border_color="#34343f",
         )
-        card.grid(row=0, column=indice, padx=4, pady=6, sticky="n")
+        card.grid(row=indice // 2, column=indice % 2, padx=6, pady=6, sticky="n")
         card.pack_propagate(False)   # respeita o tamanho fixo
 
         # Moldura QUADRADA (corner_radius=0) pra miniatura — o fundo escuro dela
         # preenche as sobras da proporção (letterbox), sem "buraco" pro fundo.
-        moldura = ctk.CTkFrame(card, fg_color="#14141c", corner_radius=0, height=80)
+        moldura = ctk.CTkFrame(card, fg_color="#14141c", corner_radius=0, height=120)
         moldura.pack(fill="x", padx=6, pady=(6, 2))
         moldura.pack_propagate(False)
         # tk.Label (não CTkLabel) porque a miniatura é uma PhotoImage comum.
@@ -834,17 +871,34 @@ class App(ctk.CTk):
         rot_img.pack(expand=True)
 
         rot_nome = ctk.CTkLabel(
-            card, text=preset["nome"], font=ctk.CTkFont(size=11),
-            text_color="#e6e6f0", wraplength=144,
+            card, text=preset["nome"], font=ctk.CTkFont(size=12),
+            text_color="#e6e6f0", wraplength=210,
         )
         rot_nome.pack()
         modelo = self._nome_amigavel_modelo(preset["modelo"]) if preset.get("modelo") else "—"
         rot_modelo = ctk.CTkLabel(
             card, text=modelo, font=ctk.CTkFont(size=9),
-            text_color="#7c6df0", wraplength=144,
+            text_color="#7c6df0", wraplength=210,
         )
         rot_modelo.pack()
-        for w in (card, moldura, rot_img, rot_nome, rot_modelo):
+        # LoRA(s) usados — lidos do próprio prompt_base (<lora:nome:peso>), com o
+        # peso em %. Fica em verde-água pra não confundir com o modelo (roxo).
+        loras = re.findall(r"<lora:([^:>]+):([0-9.]+)>", preset.get("prompt_base", ""))
+        if loras:
+            curto = loras[0][0].split(" - ")[0].replace("_", " ").strip()
+            if len(curto) > 15:
+                curto = curto[:15] + "…"
+            txt_lora = f"🎛️ {curto} {int(round(float(loras[0][1]) * 100))}%"
+            if len(loras) > 1:
+                txt_lora += f" +{len(loras) - 1}"
+        else:
+            txt_lora = ""   # sem LoRA: linha reservada, cards ficam do mesmo tamanho
+        rot_lora = ctk.CTkLabel(
+            card, text=txt_lora, font=ctk.CTkFont(size=10),
+            text_color="#7fd4c1", wraplength=210,
+        )
+        rot_lora.pack()
+        for w in (card, moldura, rot_img, rot_nome, rot_modelo, rot_lora):
             w.bind("<Button-1>", lambda e, p=preset: self._selecionar_preset(p))
 
         # ✕ apagar (direita) e ✏️ renomear (esquerda), por cima da miniatura —
@@ -875,6 +929,7 @@ class App(ctk.CTk):
                 card.configure(border_color="#34343f", border_width=1)
             self.campo_prompt.delete("1.0", "end")
             # Volta o painel da direita pro placeholder (tira a referência).
+            self._img_grande_path = None
             self._imagem_gerada_ctk = None
             self.rotulo_imagem_gerada.configure(
                 image=None, text="🖼️ a imagem gerada / referência aparece aqui")
@@ -898,8 +953,18 @@ class App(ctk.CTk):
         # de gerar). Não mexe em self._ultima_imagem — o ⭐ Favoritar continua
         # salvando só o que você GEROU, não a referência.
         ref = preset.get("referencia")
+        # Clicar num favorito PULA pra aba Imagem (pra você ver a referência
+        # grande e já gerar). Troca a aba ANTES de exibir, pra o painel já estar
+        # visível e medido quando a imagem for encaixada.
+        self.abas_dir.set("🖼️ Imagem")
+        self._trocar_aba_dir("🖼️ Imagem")
         if ref_existe := (ref and (presets.PASTA_REFS / ref).exists()):
             self._exibir_imagem_grande(presets.PASTA_REFS / ref)
+        else:
+            self._img_grande_path = None
+            self._imagem_gerada_ctk = None
+            self.rotulo_imagem_gerada.configure(
+                image=None, text="🖼️ a imagem gerada / referência aparece aqui")
         info_modelo = (f" · {self._nome_amigavel_modelo(preset['modelo'])}"
                        if preset.get("modelo") else "")
         rotulo = "Referência" if ref_existe else "Base"
@@ -956,6 +1021,37 @@ class App(ctk.CTk):
         self.campo_prompt.insert("1.0", molde)
         self.status_imagem.configure(
             text="🎭 virou molde — diga um personagem e gere (ou ⭐ salve o molde).")
+
+    def _recarregar_loras(self):
+        """(Re)varre a pasta de LoRAs do Forge e popula o seletor. Chamado ao
+        montar a aba e toda vez que você entra no modo Imagem (pega LoRAs novos
+        que você jogou na pasta com o Yato aberto)."""
+        loras = imagem.listar_loras()
+        if loras:
+            self.seletor_lora.configure(values=loras)
+            if self.seletor_lora.get() not in loras:
+                self.seletor_lora.set(loras[0])
+        else:
+            self.seletor_lora.configure(values=["(nenhum na pasta)"])
+            self.seletor_lora.set("(nenhum na pasta)")
+
+    def _atualizar_peso_lora(self, valor):
+        """Mostra o peso do LoRA (0.0–2.0) ao lado do slider."""
+        self.rotulo_peso_lora.configure(text=f"{float(valor):.1f}")
+
+    def _adicionar_lora(self):
+        """Injeta <lora:nome:peso> no fim do prompt — o mesmo que digitar na mão,
+        mas sem errar o nome. Dá pra adicionar vários (é só repetir)."""
+        nome = self.seletor_lora.get()
+        if not nome or nome.startswith("("):
+            self.status_imagem.configure(text="Nenhum LoRA na pasta pra adicionar.")
+            return
+        peso = round(self.peso_lora.get(), 1)
+        tag = f"<lora:{nome}:{peso}>"
+        atual = self.campo_prompt.get("1.0", "end").strip()
+        self.campo_prompt.delete("1.0", "end")
+        self.campo_prompt.insert("1.0", f"{atual}, {tag}" if atual else tag)
+        self.status_imagem.configure(text=f"LoRA adicionado: {nome} ({peso})")
 
     def _favoritar_click(self):
         """Salva a última imagem gerada como um novo favorito. Pergunta só o
@@ -1077,28 +1173,50 @@ class App(ctk.CTk):
         return False
 
     def _exibir_imagem_grande(self, caminho):
-        """Renderiza uma imagem no rótulo grande da direita, ENCAIXANDO no espaço
-        sem distorcer (serve pra quadrado, retrato ou paisagem). Usado tanto pra
-        REFERÊNCIA do preset quanto pra imagem recém-GERADA."""
+        """Marca qual imagem deve aparecer no painel direito e a encaixa. O
+        encaixe de fato mora no _reencaixar_imagem — que roda AQUI e também
+        sozinho a cada resize do painel (é o que corrige o 'não aparece no
+        lugar': antes eu media o painel uma vez só, muitas vezes cedo demais)."""
+        self._img_grande_path = caminho
+        self._ultimo_encaixe = None   # força recalcular
+        self._reencaixar_imagem()
+
+    def _reencaixar_imagem(self, _tentativa=0):
+        """Redimensiona a imagem ATUAL pra caber no painel, medindo o tamanho
+        REAL dele agora, sem distorcer. Chamado ao exibir e a cada <Configure>.
+        Se o painel ainda não foi medido (layout não assentou), TENTA DE NOVO
+        umas vezes e, no pior caso, usa um tamanho padrão — assim a imagem
+        SEMPRE aparece (era o bug: antes ele desistia e a imagem não vinha)."""
+        caminho = getattr(self, "_img_grande_path", None)
+        if not caminho:
+            return
+        cx = self.rotulo_imagem_gerada.winfo_width()
+        cy = self.rotulo_imagem_gerada.winfo_height()
+        if cx <= 20 or cy <= 20:
+            if _tentativa < 8 and self.painel_imagem.winfo_ismapped():
+                self.after(40, lambda: self._reencaixar_imagem(_tentativa + 1))
+                return
+            cx, cy = 480, 560   # rede de segurança: mostra mesmo sem medir direito
+        # Evita retrabalho/loop: mesmo painel + mesma imagem = não redesenha.
+        assinatura = (cx, cy, str(caminho))
+        if assinatura == getattr(self, "_ultimo_encaixe", None):
+            return
+        self._ultimo_encaixe = assinatura
         try:
             img = Image.open(caminho)
         except (OSError, ValueError):
             return
-        # Espaço real do rótulo agora (a coluna da direita). Se ainda não foi
-        # medido (winfo=1 no boot), cai num tamanho padrão generoso.
-        cx = self.rotulo_imagem_gerada.winfo_width()
-        cy = self.rotulo_imagem_gerada.winfo_height()
-        box_l = cx - 16 if cx > 20 else 460
-        box_a = cy - 16 if cy > 20 else 580
-        razao = min(box_l / img.width, box_a / img.height)
+        razao = min((cx - 12) / img.width, (cy - 12) / img.height)
         tamanho = (max(1, int(img.width * razao)), max(1, int(img.height * razao)))
         self._imagem_gerada_ctk = ctk.CTkImage(
             light_image=img, dark_image=img, size=tamanho)
         self.rotulo_imagem_gerada.configure(text="", image=self._imagem_gerada_ctk)
 
     def _imagem_pronta(self, caminho, prompt=""):
-        """Mostra a imagem GERADA no painel grande e guarda caminho + prompt
-        (pro ⭐ Favoritar)."""
+        """Mostra a imagem GERADA no painel grande (pulando pra aba Imagem, caso
+        você estivesse nos Favoritos) e guarda caminho + prompt (pro ⭐ Favoritar)."""
+        self.abas_dir.set("🖼️ Imagem")
+        self._trocar_aba_dir("🖼️ Imagem")
         self._exibir_imagem_grande(caminho)
         self.status_imagem.configure(text=f"pronto — salvo em {caminho.name}")
         self._ultima_imagem = caminho

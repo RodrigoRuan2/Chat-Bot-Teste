@@ -46,6 +46,7 @@ PASTA_IMAGENS = Path(__file__).with_name("imagens_geradas")
 PASTA_FORGE = Path(os.environ.get(
     "YATO_FORGE", r"C:\Users\ruanc\projetos\Criando o Yato\webui"))
 BAT_FORGE = PASTA_FORGE / "webui-user.bat"
+PASTA_LORA = PASTA_FORGE / "models" / "Lora"
 
 _processo_forge = None   # o Popen do Forge, quando foi o Yato que o abriu
 
@@ -198,6 +199,18 @@ def esperar_disponivel(timeout=150, intervalo=2):
             return True
         time.sleep(intervalo)
     return False
+
+
+def listar_loras():
+    """Os LoRAs (.safetensors) instalados na pasta do Forge. Devolve os NOMES
+    como entram na tag <lora:NOME:peso> — o caminho relativo à pasta Lora, sem a
+    extensão (subpastas viram 'subpasta/nome'). Lê a PASTA direto (funciona com o
+    Forge fechado); vazio se a pasta não existir."""
+    if not PASTA_LORA.exists():
+        return []
+    nomes = [arq.relative_to(PASTA_LORA).with_suffix("").as_posix()
+             for arq in PASTA_LORA.rglob("*.safetensors")]
+    return sorted(nomes)
 
 
 def listar_modelos():
