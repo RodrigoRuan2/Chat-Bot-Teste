@@ -24,10 +24,11 @@ import threading
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+import tkinter as tk
 from tkinter import filedialog
 
 import customtkinter as ctk
-from PIL import Image, ImageGrab
+from PIL import Image, ImageGrab, ImageTk
 
 from personalidade import PERSONALIDADE
 from cerebro import pensar, acordar, garantir_ollama, CerebroError, MODELO
@@ -57,6 +58,17 @@ DICAS_MODO = {
     "🎯 Preciso": "fatos, listas e buscas",
     "💬 Natural": "papo do dia a dia",
     "🎭 Lúdico": "histórias e zoeira — não confie em fatos aqui!",
+}
+
+# ---- Tamanhos de imagem oferecidos ----
+# O SDXL/Nova Anime XL gosta de proporções em torno de ~1 megapixel. Estes três
+# cabem nos 8 GB de VRAM e cobrem os casos comuns. Um preset "lembra" o tamanho
+# em que foi feito (vem embutido no PNG), então ao escolher um favorito o seletor
+# já se ajusta sozinho.
+TAMANHOS_IMAGEM = {
+    "Quadrado": (768, 768),
+    "Retrato": (768, 1152),
+    "Paisagem": (1152, 768),
 }
 
 # ---- Diário de bordo (yato.log, criado ao lado deste arquivo) ----
@@ -98,8 +110,8 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Yato — IA local")
-        self.geometry("600x680")
-        self.minsize(540, 480)
+        self.geometry("960x720")
+        self.minsize(760, 560)
 
         # Sem isto, o Windows agrupa a janela sob o ícone do 'pythonw' na barra
         # de tarefas (porque é ele que roda o app). Dar um "AppUserModelID"
@@ -608,117 +620,133 @@ class App(ctk.CTk):
 
     # ------------------------------------------------------- modo imagem
     def _montar_view_imagem(self):
-        """O laboratório de geração, agora girando em torno de FAVORITOS:
-        escolha um preset como base → (opcional) diga um personagem → o Yato
-        injeta no slot → o Forge desenha. O 'modo livre' (descrever em PT) segue
-        disponível, encolhido embaixo."""
+        """O laboratório de geração, em DUAS COLUNAS: à esquerda os controles
+        (favoritos, personagem, prompt, ações), à direita a imagem GRANDE. O
+        'modo livre' (descrever em PT) segue disponível, encolhido."""
         v = self.view_imagem
 
-        # ---- MODELO (checkpoint) ----
-        # self._modelos_disponiveis mapeia nome amigável -> título completo
-        # (o que a API do Forge realmente espera).
-        linha_modelo = ctk.CTkFrame(v, fg_color="transparent")
-        linha_modelo.pack(fill="x", pady=(0, 8))
-        ctk.CTkLabel(linha_modelo, text="Modelo:", font=ctk.CTkFont(size=12)).pack(side="left")
+        # ---- TOPO (largura toda): Modelo + Tamanho ----
+        # self._modelos_disponiveis mapeia nome amigável -> título completo.
+        topo = ctk.CTkFrame(v, fg_color="transparent")
+        topo.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(topo, text="Modelo:", font=ctk.CTkFont(size=12)).pack(side="left")
         self._modelos_disponiveis = {}
         self.seletor_modelo_imagem = ctk.CTkOptionMenu(
-            linha_modelo, values=["(carregando…)"], width=240,
+            topo, values=["(carregando…)"], width=240,
             command=self._trocar_modelo_click,
         )
         self.seletor_modelo_imagem.pack(side="left", padx=(8, 8))
         ctk.CTkButton(
-            linha_modelo, text="🔄", width=32,
-            fg_color="transparent", border_width=1,
+            topo, text="🔄", width=32, fg_color="transparent", border_width=1,
             command=self._atualizar_lista_modelos,
         ).pack(side="left")
-
-        # ---- ⭐ FAVORITOS: a galeria (rola na horizontal) ----
-        ctk.CTkLabel(
-            v, text="⭐ Favoritos — clique pra usar de base:",
-            font=ctk.CTkFont(size=12), anchor="w",
-        ).pack(fill="x", pady=(0, 4))
-        self.galeria_favoritos = ctk.CTkScrollableFrame(
-            v, orientation="horizontal", height=126, fg_color="#20202c",
+        self.seletor_tamanho = ctk.CTkOptionMenu(
+            topo, values=list(TAMANHOS_IMAGEM.keys()), width=104,
+            font=ctk.CTkFont(size=11),
         )
-        self.galeria_favoritos.pack(fill="x", pady=(0, 10))
-        self._cards_preset = {}        # id -> botão-card (pra marcar o selecionado)
-        self._thumbs_preset = []       # segura as CTkImage vivas (senão o Tk as esquece)
+        self.seletor_tamanho.set("Quadrado")
+        self.seletor_tamanho.pack(side="right")
+        ctk.CTkLabel(topo, text="Tamanho:",
+                     font=ctk.CTkFont(size=11)).pack(side="right", padx=(0, 6))
+
+        # ---- ⭐ FAVORITOS: faixa de LARGURA TOTAL (fileira única, paginada) ----
+        # Fica FORA das colunas pra NÃO espremer os controles. Sem rolagem (o
+        # CTkScrollableFrame buga imagens); a paginação ◀ ▶ dá conta de tudo.
+        cab_fav = ctk.CTkFrame(v, fg_color="transparent")
+        cab_fav.pack(fill="x", pady=(0, 2))
+        ctk.CTkLabel(cab_fav, text="⭐ Favoritos — clique pra usar de base:",
+                     font=ctk.CTkFont(size=12)).pack(side="left")
+        self.rotulo_pagina = ctk.CTkLabel(cab_fav, text="", font=ctk.CTkFont(size=11),
+                                          text_color="#8a8aa0")
+        self.rotulo_pagina.pack(side="right")
+
+        faixa = ctk.CTkFrame(v, fg_color="transparent")
+        faixa.pack(fill="x", pady=(0, 10))
+        self.btn_pag_ant = ctk.CTkButton(faixa, text="◀", width=30, height=126,
+                                          fg_color="transparent", border_width=1,
+                                          command=self._pagina_anterior)
+        self.btn_pag_ant.pack(side="left", padx=(0, 6))
+        self.btn_pag_prox = ctk.CTkButton(faixa, text="▶", width=30, height=126,
+                                           fg_color="transparent", border_width=1,
+                                           command=self._pagina_proxima)
+        self.btn_pag_prox.pack(side="right", padx=(6, 0))
+        self.galeria_favoritos = ctk.CTkFrame(faixa, fg_color="#20202c", corner_radius=8)
+        self.galeria_favoritos.pack(side="left", fill="both", expand=True)
+        for c in range(5):
+            self.galeria_favoritos.grid_columnconfigure(c, weight=1)
+        self._pagina_favoritos = 0
+        self._cards_preset = {}        # id -> card (pra marcar o selecionado)
+        self._thumbs_preset = []       # segura as PhotoImage vivas (senão o Tk as esquece)
         self._preset_escolhido = None  # o preset (dict) escolhido agora
+        presets.preencher_modelos_faltando()   # backfill do modelo nos favoritos antigos
         self._recarregar_favoritos()
 
-        # ---- PERSONAGEM (opcional) ----
-        ctk.CTkLabel(
-            v, text="Personagem (opcional — o Yato encaixa no preset):",
-            font=ctk.CTkFont(size=12), anchor="w",
-        ).pack(fill="x", pady=(0, 4))
+        # ---- CORPO: duas colunas (controles | imagem) ----
+        corpo = ctk.CTkFrame(v, fg_color="transparent")
+        corpo.pack(fill="both", expand=True)
+        # Coluna esquerda de largura FIXA (pack_propagate(False) faz ela respeitar
+        # os 430px e não encolher/esticar conforme o conteúdo).
+        col_esq = ctk.CTkFrame(corpo, fg_color="transparent", width=430)
+        col_esq.pack(side="left", fill="y")
+        col_esq.pack_propagate(False)
+        col_dir = ctk.CTkFrame(corpo, fg_color="transparent")
+        col_dir.pack(side="left", fill="both", expand=True, padx=(12, 0))
+
+        # ===== ESQUERDA: só os controles (agora com folga) =====
+        ctk.CTkLabel(col_esq, text="Personagem (opcional — o Yato encaixa no preset):",
+                     font=ctk.CTkFont(size=12), anchor="w").pack(fill="x", pady=(0, 4))
         self.campo_personagem = ctk.CTkEntry(
-            v, placeholder_text="gojo, rias gremory, uma garota de cabelo azul…")
+            col_esq, placeholder_text="gojo, rias gremory, uma garota de cabelo azul…")
         self.campo_personagem.pack(fill="x", pady=(0, 10))
 
-        # ---- PROMPT (inglês, editável) ----
-        ctk.CTkLabel(
-            v, text="Prompt (inglês — pode editar antes de gerar):",
-            font=ctk.CTkFont(size=12), anchor="w",
-        ).pack(fill="x", pady=(0, 4))
-        self.campo_prompt = ctk.CTkTextbox(v, height=76)
+        ctk.CTkLabel(col_esq, text="Prompt (inglês — pode editar antes de gerar):",
+                     font=ctk.CTkFont(size=12), anchor="w").pack(fill="x", pady=(0, 4))
+        self.campo_prompt = ctk.CTkTextbox(col_esq, height=150)
         self.campo_prompt.pack(fill="x")
 
-        # ---- 🎭 VIRAR MOLDE: generaliza o prompt (tira o personagem original) ----
-        linha_molde = ctk.CTkFrame(v, fg_color="transparent")
+        linha_molde = ctk.CTkFrame(col_esq, fg_color="transparent")
         linha_molde.pack(fill="x", pady=(4, 0))
-        ctk.CTkButton(
-            linha_molde, text="🎭 Virar molde", width=120, height=26,
-            fg_color="transparent", border_width=1, text_color="#c9b8ff",
-            font=ctk.CTkFont(size=11), command=self._virar_molde_click,
-        ).pack(side="left")
-        ctk.CTkLabel(
-            linha_molde, text="reusa o estilo com outro personagem",
-            font=ctk.CTkFont(size=10), text_color="#6a6a80",
-        ).pack(side="left", padx=8)
+        ctk.CTkButton(linha_molde, text="🎭 Virar molde", width=120, height=26,
+                      fg_color="transparent", border_width=1, text_color="#c9b8ff",
+                      font=ctk.CTkFont(size=11), command=self._virar_molde_click).pack(side="left")
+        ctk.CTkLabel(linha_molde, text="reusa o estilo com outro personagem",
+                     font=ctk.CTkFont(size=10), text_color="#6a6a80").pack(side="left", padx=8)
 
-        # ---- MODO LIVRE (encolhido): descrever em PT -> ✨ Melhorar ----
-        linha_livre = ctk.CTkFrame(v, fg_color="#1f1f2a", corner_radius=8)
+        linha_livre = ctk.CTkFrame(col_esq, fg_color="#1f1f2a", corner_radius=8)
         linha_livre.pack(fill="x", pady=(8, 10))
         ctk.CTkLabel(linha_livre, text="Modo livre:", font=ctk.CTkFont(size=11),
                      text_color="#8a8aa0").pack(side="left", padx=(8, 6), pady=6)
         self.campo_descricao = ctk.CTkEntry(
             linha_livre, placeholder_text="descreva em português…")
         self.campo_descricao.pack(side="left", fill="x", expand=True, pady=6)
-        ctk.CTkButton(
-            linha_livre, text="✨ Melhorar", width=90, command=self._melhorar_prompt_click,
-        ).pack(side="left", padx=6, pady=6)
+        ctk.CTkButton(linha_livre, text="✨ Melhorar", width=90,
+                      command=self._melhorar_prompt_click).pack(side="left", padx=6, pady=6)
 
-        # ---- AÇÕES: Gerar / Favoritar / status / pasta ----
-        linha_gerar = ctk.CTkFrame(v, fg_color="transparent")
+        linha_gerar = ctk.CTkFrame(col_esq, fg_color="transparent")
         linha_gerar.pack(fill="x", pady=(0, 4))
-        ctk.CTkButton(
-            linha_gerar, text="🎨 Gerar", command=self._gerar_imagem_click,
-        ).pack(side="left")
-        # Salva a imagem que acabou de sair como um novo favorito.
-        ctk.CTkButton(
-            linha_gerar, text="⭐ Favoritar", width=110,
-            fg_color="transparent", border_width=1,
-            command=self._favoritar_click,
-        ).pack(side="left", padx=(8, 0))
-        # Atalho pra ver no Explorer tudo o que o Yato já desenhou.
-        ctk.CTkButton(
-            linha_gerar, text="📁", width=40,
-            fg_color="transparent", border_width=1,
-            command=self._abrir_pasta_imagens,
-        ).pack(side="right")
-        self.status_imagem = ctk.CTkLabel(
-            linha_gerar, text="", font=ctk.CTkFont(size=11), text_color="#8a8aa0",
-        )
-        self.status_imagem.pack(side="left", padx=(10, 0))
+        ctk.CTkButton(linha_gerar, text="🎨 Gerar",
+                      command=self._gerar_imagem_click).pack(side="left")
+        ctk.CTkButton(linha_gerar, text="⭐ Favoritar", width=110,
+                      fg_color="transparent", border_width=1,
+                      command=self._favoritar_click).pack(side="left", padx=(8, 0))
+        ctk.CTkButton(linha_gerar, text="📁", width=40, fg_color="transparent",
+                      border_width=1, command=self._abrir_pasta_imagens).pack(side="right")
 
-        # ---- RESULTADO ----
+        # ===== DIREITA: imagem GRANDE + status =====
         # (CTkImage guardada em self._imagem_gerada_ctk — sem a referência viva,
         # o Tkinter "esquece" a imagem e ela some.)
+        # corner_radius=0 (quadrado): a imagem é retangular, então canto
+        # arredondado deixaria um "buraco" mostrando o fundo nos cantos.
         self.rotulo_imagem_gerada = ctk.CTkLabel(
-            v, text="🖼️ a imagem gerada aparece aqui", text_color="#6a6a80",
-            fg_color="#1a1a24", corner_radius=10, height=260,
+            col_dir, text="🖼️ a imagem gerada / referência aparece aqui",
+            text_color="#6a6a80", fg_color="#14141c", corner_radius=0,
         )
-        self.rotulo_imagem_gerada.pack(fill="both", expand=True, pady=(8, 0))
+        self.rotulo_imagem_gerada.pack(fill="both", expand=True)
+        self.status_imagem = ctk.CTkLabel(
+            col_dir, text="", font=ctk.CTkFont(size=11), text_color="#8a8aa0",
+        )
+        self.status_imagem.pack(fill="x", pady=(6, 0))
+
         self._imagem_gerada_ctk = None
         self._ultima_imagem = None   # Path da última imagem gerada (pro Favoritar)
         self._ultimo_prompt = ""     # o prompt final usado (pro Favoritar)
@@ -737,54 +765,104 @@ class App(ctk.CTk):
                 self.galeria_favoritos,
                 text="nenhum favorito ainda — gere e clique em ⭐",
                 font=ctk.CTkFont(size=11), text_color="#6a6a80",
-            ).pack(side="left", padx=8, pady=8)
+            ).grid(row=0, column=0, columnspan=5, padx=8, pady=30)
+            self.btn_pag_ant.configure(state="disabled")
+            self.btn_pag_prox.configure(state="disabled")
+            self.rotulo_pagina.configure(text="")
             return
-        for p in lista:
-            self._criar_card_preset(p)
 
-    def _criar_card_preset(self, preset):
-        """Um card = miniatura (imagem de referência) + nome, clicável, com um
-        ✕ no canto pra apagar. É um FRAME (não um botão) porque um botão não
-        deixa a gente pôr o ✕ por cima; então o clique de selecionar fica no
-        <Button-1> do frame e dos rótulos filhos."""
+        # Só a página atual vai pra tela (fileira única, sem rolagem).
+        POR_PAGINA = 5
+        total_paginas = (len(lista) + POR_PAGINA - 1) // POR_PAGINA
+        self._pagina_favoritos = max(0, min(self._pagina_favoritos, total_paginas - 1))
+        inicio = self._pagina_favoritos * POR_PAGINA
+        for i, p in enumerate(lista[inicio:inicio + POR_PAGINA]):
+            self._criar_card_preset(p, i)
+
+        # As setas ficam desligadas nas pontas (nada de página inválida).
+        self.btn_pag_ant.configure(
+            state="disabled" if self._pagina_favoritos == 0 else "normal")
+        self.btn_pag_prox.configure(
+            state="disabled" if self._pagina_favoritos >= total_paginas - 1 else "normal")
+        self.rotulo_pagina.configure(
+            text=f"{self._pagina_favoritos + 1} / {total_paginas}" if total_paginas > 1 else "")
+
+    def _pagina_anterior(self):
+        if self._pagina_favoritos > 0:
+            self._pagina_favoritos -= 1
+            self._recarregar_favoritos()
+
+    def _pagina_proxima(self):
+        self._pagina_favoritos += 1          # o clamp no _recarregar segura o limite
+        self._recarregar_favoritos()
+
+    def _criar_card_preset(self, preset, indice):
+        """Um card na fileira de favoritos: miniatura (proporção preservada) numa
+        moldura quadrada + nome + modelo, com ✏️/✕ no topo. Clicar seleciona e
+        mostra a referência GRANDE na direita."""
         thumb = None
         ref = preset.get("referencia")
         if ref:
             caminho = presets.PASTA_REFS / ref
             if caminho.exists():
                 try:
-                    img = Image.open(caminho)
-                    thumb = ctk.CTkImage(light_image=img, dark_image=img, size=(104, 62))
+                    img = Image.open(caminho).convert("RGBA")
+                    # Encaixa na moldura mantendo a proporção (quadrado fica
+                    # quadrado, retrato fica retrato) — nada de esticar.
+                    razao = min(148 / img.width, 76 / img.height)
+                    tam = (max(1, int(img.width * razao)), max(1, int(img.height * razao)))
+                    # PhotoImage + LANCZOS: downscale suave e nítido.
+                    thumb = ImageTk.PhotoImage(img.resize(tam, Image.LANCZOS))
                     self._thumbs_preset.append(thumb)   # mantém a referência viva
                 except (OSError, ValueError):
                     thumb = None
 
         card = ctk.CTkFrame(
-            self.galeria_favoritos, width=116, height=100, corner_radius=8,
+            self.galeria_favoritos, width=158, height=126, corner_radius=8,
             fg_color="#2a2a38", border_width=1, border_color="#34343f",
         )
-        card.pack(side="left", padx=4, pady=6)
-        card.pack_propagate(False)   # respeita o tamanho fixo (não encolhe no conteúdo)
+        card.grid(row=0, column=indice, padx=4, pady=6, sticky="n")
+        card.pack_propagate(False)   # respeita o tamanho fixo
 
-        rot_img = ctk.CTkLabel(card, text="", image=thumb)
-        rot_img.pack(pady=(6, 2))
+        # Moldura QUADRADA (corner_radius=0) pra miniatura — o fundo escuro dela
+        # preenche as sobras da proporção (letterbox), sem "buraco" pro fundo.
+        moldura = ctk.CTkFrame(card, fg_color="#14141c", corner_radius=0, height=80)
+        moldura.pack(fill="x", padx=6, pady=(6, 2))
+        moldura.pack_propagate(False)
+        # tk.Label (não CTkLabel) porque a miniatura é uma PhotoImage comum.
+        rot_img = tk.Label(moldura, image=thumb, bg="#14141c", bd=0, highlightthickness=0)
+        rot_img.pack(expand=True)
+
         rot_nome = ctk.CTkLabel(
             card, text=preset["nome"], font=ctk.CTkFont(size=11),
-            text_color="#e6e6f0", wraplength=108,
+            text_color="#e6e6f0", wraplength=144,
         )
         rot_nome.pack()
-        # Clique em qualquer parte do card seleciona (o frame e os dois rótulos).
-        for w in (card, rot_img, rot_nome):
+        modelo = self._nome_amigavel_modelo(preset["modelo"]) if preset.get("modelo") else "—"
+        rot_modelo = ctk.CTkLabel(
+            card, text=modelo, font=ctk.CTkFont(size=9),
+            text_color="#7c6df0", wraplength=144,
+        )
+        rot_modelo.pack()
+        for w in (card, moldura, rot_img, rot_nome, rot_modelo):
             w.bind("<Button-1>", lambda e, p=preset: self._selecionar_preset(p))
 
-        # O ✕ de apagar, no canto superior direito (por cima da miniatura).
+        # ✕ apagar (direita) e ✏️ renomear (esquerda), por cima da miniatura —
+        # SEM box (fg transparente), só o símbolo; o fundo aparece só no hover.
         fechar = ctk.CTkButton(
-            card, text="✕", width=18, height=18, corner_radius=9,
-            fg_color="#3a3a46", hover_color="#c0392b", text_color="#e6e6f0",
-            font=ctk.CTkFont(size=10),
+            card, text="✕", width=20, height=20, corner_radius=6,
+            fg_color="transparent", hover_color="#c0392b", text_color="#ffffff",
+            font=ctk.CTkFont(size=12, weight="bold"),
             command=lambda p=preset: self._apagar_favorito(p),
         )
         fechar.place(relx=1.0, rely=0.0, x=-3, y=3, anchor="ne")
+        renomear = ctk.CTkButton(
+            card, text="✏", width=20, height=20, corner_radius=6,
+            fg_color="transparent", hover_color="#6c5ce7", text_color="#ffffff",
+            font=ctk.CTkFont(size=12),
+            command=lambda p=preset: self._renomear_favorito(p),
+        )
+        renomear.place(relx=0.0, rely=0.0, x=3, y=3, anchor="nw")
         self._cards_preset[preset["id"]] = card
 
     def _selecionar_preset(self, preset):
@@ -796,6 +874,10 @@ class App(ctk.CTk):
             for card in self._cards_preset.values():
                 card.configure(border_color="#34343f", border_width=1)
             self.campo_prompt.delete("1.0", "end")
+            # Volta o painel da direita pro placeholder (tira a referência).
+            self._imagem_gerada_ctk = None
+            self.rotulo_imagem_gerada.configure(
+                image=None, text="🖼️ a imagem gerada / referência aparece aqui")
             self.status_imagem.configure(text="Seleção limpa.")
             return
         self._preset_escolhido = preset
@@ -805,8 +887,38 @@ class App(ctk.CTk):
                            border_width=2 if escolhido else 1)
         self.campo_prompt.delete("1.0", "end")
         self.campo_prompt.insert("1.0", preset["prompt_base"])
+        # O seletor de tamanho segue o preset (ele lembra em que proporção foi
+        # feito). Se o tamanho salvo não for um dos três, deixa como está.
+        larg, alt = preset.get("tamanho", [768, 768])
+        nome_tam = next((n for n, (w, h) in TAMANHOS_IMAGEM.items()
+                         if w == larg and h == alt), None)
+        if nome_tam:
+            self.seletor_tamanho.set(nome_tam)
+        # Mostra a imagem de REFERÊNCIA grande na direita (pra você ver bem antes
+        # de gerar). Não mexe em self._ultima_imagem — o ⭐ Favoritar continua
+        # salvando só o que você GEROU, não a referência.
+        ref = preset.get("referencia")
+        if ref_existe := (ref and (presets.PASTA_REFS / ref).exists()):
+            self._exibir_imagem_grande(presets.PASTA_REFS / ref)
+        info_modelo = (f" · {self._nome_amigavel_modelo(preset['modelo'])}"
+                       if preset.get("modelo") else "")
+        rotulo = "Referência" if ref_existe else "Base"
         self.status_imagem.configure(
-            text=f"Base: {preset['nome']} — diga um personagem ou gere direto.")
+            text=f"{rotulo}: {preset['nome']}{info_modelo} — diga um personagem ou gere direto.")
+
+    def _renomear_favorito(self, preset):
+        """Troca o nome de um favorito (o ✏️ do card)."""
+        dialogo = ctk.CTkInputDialog(
+            title="Renomear favorito", text=f"Novo nome:\n(atual: {preset['nome']})")
+        novo = dialogo.get_input()
+        if novo is None or not novo.strip():
+            return
+        novo = novo.strip()
+        presets.renomear(preset["id"], novo)
+        if self._preset_escolhido and self._preset_escolhido["id"] == preset["id"]:
+            self._preset_escolhido["nome"] = novo
+        self._recarregar_favoritos()
+        self.status_imagem.configure(text=f"✏️ renomeado: {novo}")
 
     def _apagar_favorito(self, preset):
         """Apaga um favorito (com confirmação). Some da galeria na hora."""
@@ -907,6 +1019,7 @@ class App(ctk.CTk):
             self.status_imagem.configure(text="Sem prompt — escolha um favorito ou descreva algo.")
             return
         pedido = self.campo_personagem.get().strip()
+        larg, alt = TAMANHOS_IMAGEM[self.seletor_tamanho.get()]
         self.status_imagem.configure(text="🎨 desenhando… (pode levar uns 20-30s)")
 
         def trabalhar():
@@ -928,9 +1041,9 @@ class App(ctk.CTk):
             # deixado o aviso de "abrindo o Forge" na tela).
             self.after(0, lambda: self.status_imagem.configure(
                 text="🎨 desenhando… (pode levar uns 20-30s)"))
-            # 3) Desenha.
+            # 3) Desenha (no tamanho/proporção escolhido).
             try:
-                caminho = imagem.gerar(prompt)
+                caminho = imagem.gerar(prompt, largura=larg, altura=alt)
                 self.after(0, lambda: self._imagem_pronta(caminho, prompt))
             except imagem.ImagemError as erro:
                 self.after(0, lambda: self.status_imagem.configure(text=str(erro)))
@@ -963,15 +1076,30 @@ class App(ctk.CTk):
             text="O Forge demorou demais pra abrir 😕 tenta gerar de novo em instantes."))
         return False
 
-    def _imagem_pronta(self, caminho, prompt=""):
-        """Mostra a imagem gerada no rótulo, redimensionada pra caber, e guarda
-        o caminho + o prompt usado (pro botão ⭐ Favoritar poder salvar depois)."""
-        img = Image.open(caminho)
-        altura = 260
-        largura = int(img.width * altura / img.height)
+    def _exibir_imagem_grande(self, caminho):
+        """Renderiza uma imagem no rótulo grande da direita, ENCAIXANDO no espaço
+        sem distorcer (serve pra quadrado, retrato ou paisagem). Usado tanto pra
+        REFERÊNCIA do preset quanto pra imagem recém-GERADA."""
+        try:
+            img = Image.open(caminho)
+        except (OSError, ValueError):
+            return
+        # Espaço real do rótulo agora (a coluna da direita). Se ainda não foi
+        # medido (winfo=1 no boot), cai num tamanho padrão generoso.
+        cx = self.rotulo_imagem_gerada.winfo_width()
+        cy = self.rotulo_imagem_gerada.winfo_height()
+        box_l = cx - 16 if cx > 20 else 460
+        box_a = cy - 16 if cy > 20 else 580
+        razao = min(box_l / img.width, box_a / img.height)
+        tamanho = (max(1, int(img.width * razao)), max(1, int(img.height * razao)))
         self._imagem_gerada_ctk = ctk.CTkImage(
-            light_image=img, dark_image=img, size=(largura, altura))
+            light_image=img, dark_image=img, size=tamanho)
         self.rotulo_imagem_gerada.configure(text="", image=self._imagem_gerada_ctk)
+
+    def _imagem_pronta(self, caminho, prompt=""):
+        """Mostra a imagem GERADA no painel grande e guarda caminho + prompt
+        (pro ⭐ Favoritar)."""
+        self._exibir_imagem_grande(caminho)
         self.status_imagem.configure(text=f"pronto — salvo em {caminho.name}")
         self._ultima_imagem = caminho
         self._ultimo_prompt = prompt

@@ -48,6 +48,7 @@ PRESET_PADRAO = {
     "negativo": None,      # None = usa o NEGATIVO_PADRAO do imagem.py
     "referencia": None,    # nome do arquivo de miniatura dentro de refs/ (ou None)
     "tamanho": [768, 768], # [largura, altura] com que a imagem foi/será feita
+    "modelo": "",          # o checkpoint (Forge) com que a referência foi feita
 }
 
 # O SLOT: onde o personagem entra no prompt. Se o preset tiver "{personagem}"
@@ -105,6 +106,20 @@ def adicionar(preset):
     meus.append(preset)
     salvar_meus(meus)
     return preset
+
+
+def renomear(id_, novo_nome):
+    """Troca só o nome de um favorito (o id e a miniatura ficam iguais). Devolve
+    True se achou e renomeou."""
+    meus = [_normalizar(p) for p in _ler_json(_ARQ_MEUS)]
+    achou = False
+    for p in meus:
+        if p["id"] == id_:
+            p["nome"] = novo_nome
+            achou = True
+    if achou:
+        salvar_meus(meus)
+    return achou
 
 
 def remover(id_):
@@ -170,7 +185,12 @@ def _parsear_parametros(texto):
     if m:
         tamanho = [int(m.group(1)), int(m.group(2))]
 
-    return {"prompt": prompt, "negativo": negativo, "tamanho": tamanho}
+    # Modelo: o "Model: xxx" que o Forge grava — qual checkpoint desenhou.
+    mm = re.search(r"Model:\s*([^,]+)", linha_param)
+    modelo = mm.group(1).strip() if mm else ""
+
+    return {"prompt": prompt, "negativo": negativo, "tamanho": tamanho,
+            "modelo": modelo}
 
 
 def parametros_de_png(caminho):
@@ -228,7 +248,26 @@ def importar_de_png(caminho, nome=None, id_=None):
         "negativo": dados["negativo"] or None,
         "referencia": destino.name,
         "tamanho": dados["tamanho"],
+        "modelo": dados.get("modelo", ""),
     })
+
+
+def preencher_modelos_faltando():
+    """Backfill: pros favoritos que já existem SEM o campo 'modelo', lê a
+    miniatura deles (que também guarda o prompt/Model embutido) e preenche.
+    Assim os favoritos antigos ganham o modelo sem você refazer nada."""
+    meus = [_normalizar(p) for p in _ler_json(_ARQ_MEUS)]
+    mudou = False
+    for p in meus:
+        if not p.get("modelo") and p.get("referencia"):
+            ref = PASTA_REFS / p["referencia"]
+            if ref.exists():
+                dados = parametros_de_png(ref)
+                if dados and dados.get("modelo"):
+                    p["modelo"] = dados["modelo"]
+                    mudou = True
+    if mudou:
+        salvar_meus(meus)
 
 
 # ─────────────────────── INJETAR O PERSONAGEM ───────────────────────
