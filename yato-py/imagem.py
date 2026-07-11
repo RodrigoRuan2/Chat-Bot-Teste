@@ -27,6 +27,7 @@ na próxima mensagem do chat.
 import base64
 import logging
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -89,6 +90,51 @@ Regras:
 - Termine SEMPRE com: {TAGS_QUALIDADE}
 - Responda APENAS com o prompt final, sem explicações, sem aspas, sem markdown.
 - Nunca inclua conteúdo adulto/explícito."""
+
+# A instrução da INJEÇÃO (Rodada 12): tarefa MENOR que o melhorar_prompt. Aqui o
+# Yato NÃO monta a cena nem as tags de qualidade — isso já vem pronto do preset.
+# Ele só traduz UM personagem pra a tag booru canônica, pra encaixar no slot.
+_PROMPT_SISTEMA_PERSONAGEM = """Você recebe o nome ou a descrição de UM personagem
+(em português) e devolve APENAS as tags em INGLÊS que identificam esse personagem
+— NADA de cena, pose, cenário ou qualidade.
+
+Regras:
+- Personagem CONHECIDO (anime, jogo, etc.): o modelo de imagem já sabe a
+  aparência dele. Devolva SÓ, nesta ordem:
+    <nome do personagem em inglês>, <nome da obra>, <1girl ou 1boy>
+  Exemplos:
+    "gojo"          -> gojo satoru, jujutsu kaisen, 1boy
+    "rias gremory"  -> rias gremory, high school dxd, 1girl
+  PROIBIDO adicionar cabelo, olhos, roupa ou qualquer traço físico — só ATRAPALHA.
+- Descrição GENÉRICA (ex.: "uma garota de cabelo azul"): aí sim traduza pras
+  tags visuais concretas. Ex.: "1girl, blue hair, short hair".
+- Responda SÓ com as tags, em inglês, separadas por vírgula. Sem explicação, sem
+  aspas, sem markdown, sem tags de qualidade, sem ponto final."""
+
+# A instrução do VIRAR MOLDE (generalizar): pega um prompt cheio dos traços de UM
+# personagem e devolve um MOLDE reutilizável — mesmo estilo/cena, mas com o slot
+# {personagem} no lugar da aparência. Resolve o "quero o estilo, mas com OUTRO
+# personagem" (senão o cabelo/olhos do original brigam com o novo).
+_PROMPT_SISTEMA_GENERALIZAR = """Você recebe um prompt de imagem em INGLÊS (tags
+booru, estilo Illustrious/Nova Anime XL) e transforma ele num MOLDE reutilizável:
+mantém o ESTILO e a CENA, mas tira o que é do PERSONAGEM, pra outro personagem
+poder entrar no lugar.
+
+Faça assim:
+- REMOVA as tags de APARÊNCIA/IDENTIDADE do personagem: nome de personagem;
+  cabelo (cor e estilo, ex.: "blue hair", "long hair", "blunt bangs"); olhos
+  (cor, ex.: "red eyes"); pele; corpo; chifres/orelhas/cauda de raça; e a
+  contagem de gênero ("1girl", "1boy", "2girls"). O personagem novo traz isso.
+- MANTENHA tudo que é ESTILO e CENA: qualidade (masterpiece, best quality...);
+  tags de artista (ex.: "@sw33t"); enquadramento e pose (upper body, from behind,
+  looking back); ângulo de câmera; luz; cenário/fundo; efeitos; clima; roupa
+  genérica.
+- Comece a resposta com "{personagem}, " e depois as tags mantidas.
+- Responda SÓ com o prompt final, em inglês, sem explicação, sem aspas.
+
+Exemplo:
+entrada: "masterpiece, best quality, 1girl, solo, @sw33t, upper body, from behind, (white hair:1.2), blue hair, blunt bangs, (blue eyes:1.3), glowing eyes, kimono, snowflakes, dark background"
+saída: "{personagem}, masterpiece, best quality, solo, @sw33t, upper body, from behind, glowing eyes, kimono, snowflakes, dark background\""""
 
 
 class ImagemError(Exception):
@@ -234,6 +280,138 @@ def melhorar_prompt(descricao_pt):
     if not texto:
         raise ImagemError("O cérebro não devolveu nada — tenta descrever de outro jeito?")
     return texto
+
+
+def personagem_para_tags(pedido_pt):
+    """Traduz UM personagem (em português) pra a tag booru canônica que entra no
+    slot {personagem} de um preset. Ex.: "gojo" -> "gojo satoru, jujutsu kaisen,
+    1boy". Tarefa pequena e focada — o preset já cuida da cena e da qualidade.
+    Devolve a tag (string). Levanta ImagemError se o cérebro estiver fora."""
+    if not pedido_pt or not pedido_pt.strip():
+        return ""
+    try:
+        r = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": MODELO,
+                "stream": False,
+                "keep_alive": "10m",
+                "messages": [
+                    {"role": "system", "content": _PROMPT_SISTEMA_PERSONAGEM},
+                    {"role": "user", "content": pedido_pt},
+                ],
+                # Tarefa curta e determinística: poucos tokens, temperatura baixa
+                # (queremos SEMPRE a mesma tag pro mesmo personagem, sem invenção).
+                "options": {"num_predict": 60, "temperature": 0.3},
+            },
+            timeout=60,
+        )
+        r.raise_for_status()
+    except requests.exceptions.ConnectionError:
+        raise ImagemError("Meu cérebro tá desligado 💀 (abre o Ollama e tenta de novo)")
+    except requests.exceptions.RequestException as erro:
+        logging.warning("personagem_para_tags falhou: %s", erro)
+        raise ImagemError("Não consegui traduzir o personagem — tenta de novo?")
+
+    # Limpa sujeira comum: aspas, ponto final, quebras de linha.
+    return r.json().get("message", {}).get("content", "").strip().strip('".').replace("\n", " ")
+
+
+# O FILTRO DE APARÊNCIA (determinístico): o cérebro é bom em RECONHECER o nome do
+# personagem, mas ruim em APAGAR tags de um prompt longo (modelo pequeno tende a
+# copiar tudo). Como tag booru é texto separado por vírgula, a gente apaga as de
+# aparência por REGRA — confiável, sem depender do cérebro. Tudo que casar aqui
+# sai do molde (o personagem novo traz os traços dele).
+_APARENCIA_SUBSTR = ("hair", "eyes", "breasts", "skin")   # casa por pedaço no meio
+# Tags que FORÇAM a paleta da imagem inteira — num molde elas pintam até a pele
+# do novo personagem (ex.: "(blue theme:1.3)" deixou a Rias azul). Fora todas.
+# (Qualquer "<cor> theme" também é pego pela regra endswith(" theme").)
+_COR_FORCADA = {
+    "monochrome", "greyscale", "grayscale", "limited palette", "spot color",
+    "muted colors", "muted color", "sepia", "colored skin",
+}
+_APARENCIA_EXATAS = {
+    "1girl", "1boy", "2girls", "2boys", "3girls", "3boys", "1other",
+    "multiple girls", "multiple boys", "6+girls",
+    "bangs", "blunt bangs", "swept bangs", "sidelocks", "ponytail", "twintails",
+    "twin tails", "braid", "braids", "ahoge", "hime cut", "bob cut",
+    "horns", "oni horns", "dragon horns", "pointy ears", "animal ears",
+    "cat ears", "fox ears", "dog ears", "rabbit ears", "elf ears",
+    "tail", "cat tail", "fox tail", "wings", "angel wings", "demon wings",
+    "halo", "fang", "fangs", "heterochromia",
+    "pale skin", "dark skin", "tan", "tanlines", "curvy", "flat chest",
+    "thick thighs", "wide hips", "petite", "muscular", "slim",
+}
+
+
+def _tag_limpa(tag):
+    """Tira peso e parênteses de uma tag: '(white hair:1.2)' -> 'white hair'."""
+    t = tag.strip().strip("()")
+    t = re.sub(r":[\d.]+$", "", t)   # o peso ":1.2" no fim
+    return t.strip("() ").lower()
+
+
+def _e_aparencia(tag):
+    """True se a tag descreve a aparência/identidade do personagem OU força a
+    paleta de cor da imagem (que num molde acaba pintando o personagem novo)."""
+    limpo = _tag_limpa(tag)
+    if limpo in _APARENCIA_EXATAS or limpo in _COR_FORCADA:
+        return True
+    if limpo.endswith(" theme"):   # "blue theme", "red theme", "dark theme"…
+        return True
+    return any(p in limpo for p in _APARENCIA_SUBSTR)
+
+
+def _remover_aparencia(prompt):
+    """Filtra as tags de aparência de um prompt, preservando o slot {personagem}
+    na frente. É a rede de segurança confiável por cima do cérebro."""
+    tem_slot = "{personagem}" in prompt
+    tags = [t.strip() for t in prompt.split(",")]
+    mantidas = [t for t in tags
+                if t and t != "{personagem}" and not _e_aparencia(t)]
+    corpo = ", ".join(mantidas)
+    return f"{{personagem}}, {corpo}" if tem_slot else corpo
+
+
+def generalizar_prompt(prompt_en):
+    """Transforma um prompt cheio dos traços de UM personagem num MOLDE com o
+    slot {personagem} — mantém estilo/cena, tira a aparência. Serve pra reusar o
+    mesmo estilo com outro personagem. Devolve o prompt-molde (string).
+
+    Duas camadas: o cérebro tira o NOME do personagem (o que ele faz bem) e um
+    filtro no código tira as tags de APARÊNCIA (o que o cérebro faz mal)."""
+    if not prompt_en or not prompt_en.strip():
+        raise ImagemError("Sem prompt pra virar molde — escolha ou gere algo antes.")
+    try:
+        r = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": MODELO,
+                "stream": False,
+                "keep_alive": "10m",
+                "messages": [
+                    {"role": "system", "content": _PROMPT_SISTEMA_GENERALIZAR},
+                    {"role": "user", "content": prompt_en},
+                ],
+                "options": {"num_predict": 300, "temperature": 0.4},
+            },
+            timeout=90,
+        )
+        r.raise_for_status()
+    except requests.exceptions.ConnectionError:
+        raise ImagemError("Meu cérebro tá desligado 💀 (abre o Ollama e tenta de novo)")
+    except requests.exceptions.RequestException as erro:
+        logging.warning("generalizar_prompt falhou: %s", erro)
+        raise ImagemError("Não consegui virar molde — tenta de novo?")
+
+    texto = r.json().get("message", {}).get("content", "").strip().strip('"')
+    if not texto:
+        raise ImagemError("O cérebro não devolveu o molde — tenta de novo?")
+    # Rede de segurança: se o cérebro esquecer o slot, põe na frente.
+    if "{personagem}" not in texto:
+        texto = "{personagem}, " + texto
+    # A CAMADA CONFIÁVEL: apaga as tags de aparência que o cérebro deixou passar.
+    return _remover_aparencia(texto)
 
 
 def gerar(prompt, negativo=None, passos=25, largura=768, altura=768):

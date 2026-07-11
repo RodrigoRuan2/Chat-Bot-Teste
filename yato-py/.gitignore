@@ -23,6 +23,12 @@ vozes/
 # As imagens que o Yato desenha são SEU conteúdo gerado, não código do projeto.
 imagens_geradas/
 
+# Presets: os CURADOS (embutidos.json) sobem pro repo; os que VOCÊ salva
+# (meus.json) e as miniaturas de referência (refs/, tiradas das suas imagens
+# geradas) são DADO PESSOAL, como as conversas — ficam só nesta máquina.
+presets/meus.json
+presets/refs/
+
 # O Electron do avatar (~200 MB) é baixado pelo npm install (o preparar.py roda).
 # Só o código (main.js/preload.js/package.json) vai pro repo.
 avatar-electron/node_modules/

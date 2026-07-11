@@ -38,6 +38,7 @@ import voz
 import ouvido
 import avatar2d
 import imagem
+import presets
 
 # ---- Os MODOS: nomes amigáveis pra temperatura ----
 # Temperatura é o "grau de ousadia" na escolha de cada palavra — mas um
@@ -607,16 +608,17 @@ class App(ctk.CTk):
 
     # ------------------------------------------------------- modo imagem
     def _montar_view_imagem(self):
-        """O laboratório de geração: descreva em português → o cérebro
-        melhora o prompt (traduz + tags de qualidade) → o Forge desenha."""
+        """O laboratório de geração, agora girando em torno de FAVORITOS:
+        escolha um preset como base → (opcional) diga um personagem → o Yato
+        injeta no slot → o Forge desenha. O 'modo livre' (descrever em PT) segue
+        disponível, encolhido embaixo."""
         v = self.view_imagem
 
-        # O seletor de MODELO (checkpoint): cada um tem um ponto forte
-        # diferente (anime, realismo…) — troca direto daqui, sem mexer no
-        # Forge na mão. self._modelos_disponiveis mapeia nome amigável ->
-        # título completo (o que a API do Forge realmente espera).
+        # ---- MODELO (checkpoint) ----
+        # self._modelos_disponiveis mapeia nome amigável -> título completo
+        # (o que a API do Forge realmente espera).
         linha_modelo = ctk.CTkFrame(v, fg_color="transparent")
-        linha_modelo.pack(fill="x", pady=(0, 10))
+        linha_modelo.pack(fill="x", pady=(0, 8))
         ctk.CTkLabel(linha_modelo, text="Modelo:", font=ctk.CTkFont(size=12)).pack(side="left")
         self._modelos_disponiveis = {}
         self.seletor_modelo_imagem = ctk.CTkOptionMenu(
@@ -630,34 +632,77 @@ class App(ctk.CTk):
             command=self._atualizar_lista_modelos,
         ).pack(side="left")
 
+        # ---- ⭐ FAVORITOS: a galeria (rola na horizontal) ----
         ctk.CTkLabel(
-            v, text="Descreva a imagem (em português):",
+            v, text="⭐ Favoritos — clique pra usar de base:",
             font=ctk.CTkFont(size=12), anchor="w",
         ).pack(fill="x", pady=(0, 4))
+        self.galeria_favoritos = ctk.CTkScrollableFrame(
+            v, orientation="horizontal", height=126, fg_color="#20202c",
+        )
+        self.galeria_favoritos.pack(fill="x", pady=(0, 10))
+        self._cards_preset = {}        # id -> botão-card (pra marcar o selecionado)
+        self._thumbs_preset = []       # segura as CTkImage vivas (senão o Tk as esquece)
+        self._preset_escolhido = None  # o preset (dict) escolhido agora
+        self._recarregar_favoritos()
 
-        self.campo_descricao = ctk.CTkTextbox(v, height=64)
-        self.campo_descricao.pack(fill="x")
-
-        ctk.CTkButton(
-            v, text="✨ Melhorar prompt", command=self._melhorar_prompt_click,
-        ).pack(anchor="w", pady=(8, 12))
-
+        # ---- PERSONAGEM (opcional) ----
         ctk.CTkLabel(
-            v, text="Prompt (em inglês — pode editar antes de gerar):",
+            v, text="Personagem (opcional — o Yato encaixa no preset):",
             font=ctk.CTkFont(size=12), anchor="w",
         ).pack(fill="x", pady=(0, 4))
+        self.campo_personagem = ctk.CTkEntry(
+            v, placeholder_text="gojo, rias gremory, uma garota de cabelo azul…")
+        self.campo_personagem.pack(fill="x", pady=(0, 10))
 
-        self.campo_prompt = ctk.CTkTextbox(v, height=84)
+        # ---- PROMPT (inglês, editável) ----
+        ctk.CTkLabel(
+            v, text="Prompt (inglês — pode editar antes de gerar):",
+            font=ctk.CTkFont(size=12), anchor="w",
+        ).pack(fill="x", pady=(0, 4))
+        self.campo_prompt = ctk.CTkTextbox(v, height=76)
         self.campo_prompt.pack(fill="x")
 
+        # ---- 🎭 VIRAR MOLDE: generaliza o prompt (tira o personagem original) ----
+        linha_molde = ctk.CTkFrame(v, fg_color="transparent")
+        linha_molde.pack(fill="x", pady=(4, 0))
+        ctk.CTkButton(
+            linha_molde, text="🎭 Virar molde", width=120, height=26,
+            fg_color="transparent", border_width=1, text_color="#c9b8ff",
+            font=ctk.CTkFont(size=11), command=self._virar_molde_click,
+        ).pack(side="left")
+        ctk.CTkLabel(
+            linha_molde, text="reusa o estilo com outro personagem",
+            font=ctk.CTkFont(size=10), text_color="#6a6a80",
+        ).pack(side="left", padx=8)
+
+        # ---- MODO LIVRE (encolhido): descrever em PT -> ✨ Melhorar ----
+        linha_livre = ctk.CTkFrame(v, fg_color="#1f1f2a", corner_radius=8)
+        linha_livre.pack(fill="x", pady=(8, 10))
+        ctk.CTkLabel(linha_livre, text="Modo livre:", font=ctk.CTkFont(size=11),
+                     text_color="#8a8aa0").pack(side="left", padx=(8, 6), pady=6)
+        self.campo_descricao = ctk.CTkEntry(
+            linha_livre, placeholder_text="descreva em português…")
+        self.campo_descricao.pack(side="left", fill="x", expand=True, pady=6)
+        ctk.CTkButton(
+            linha_livre, text="✨ Melhorar", width=90, command=self._melhorar_prompt_click,
+        ).pack(side="left", padx=6, pady=6)
+
+        # ---- AÇÕES: Gerar / Favoritar / status / pasta ----
         linha_gerar = ctk.CTkFrame(v, fg_color="transparent")
-        linha_gerar.pack(fill="x", pady=(8, 4))
+        linha_gerar.pack(fill="x", pady=(0, 4))
         ctk.CTkButton(
             linha_gerar, text="🎨 Gerar", command=self._gerar_imagem_click,
         ).pack(side="left")
+        # Salva a imagem que acabou de sair como um novo favorito.
+        ctk.CTkButton(
+            linha_gerar, text="⭐ Favoritar", width=110,
+            fg_color="transparent", border_width=1,
+            command=self._favoritar_click,
+        ).pack(side="left", padx=(8, 0))
         # Atalho pra ver no Explorer tudo o que o Yato já desenhou.
         ctk.CTkButton(
-            linha_gerar, text="📁 Imagens", width=110,
+            linha_gerar, text="📁", width=40,
             fg_color="transparent", border_width=1,
             command=self._abrir_pasta_imagens,
         ).pack(side="right")
@@ -666,20 +711,174 @@ class App(ctk.CTk):
         )
         self.status_imagem.pack(side="left", padx=(10, 0))
 
-        # O resultado: começa com um placeholder; vira a imagem de verdade
-        # depois de gerar (CTkImage guardada em self._imagem_gerada_ctk —
-        # sem a referência viva, o Tkinter "esquece" a imagem e ela some).
+        # ---- RESULTADO ----
+        # (CTkImage guardada em self._imagem_gerada_ctk — sem a referência viva,
+        # o Tkinter "esquece" a imagem e ela some.)
         self.rotulo_imagem_gerada = ctk.CTkLabel(
             v, text="🖼️ a imagem gerada aparece aqui", text_color="#6a6a80",
-            fg_color="#1a1a24", corner_radius=10, height=320,
+            fg_color="#1a1a24", corner_radius=10, height=260,
         )
         self.rotulo_imagem_gerada.pack(fill="both", expand=True, pady=(8, 0))
         self._imagem_gerada_ctk = None
+        self._ultima_imagem = None   # Path da última imagem gerada (pro Favoritar)
+        self._ultimo_prompt = ""     # o prompt final usado (pro Favoritar)
+
+    def _recarregar_favoritos(self):
+        """Lê os presets do disco e (re)desenha os cards da galeria. Chamado no
+        início e toda vez que um favorito é adicionado."""
+        for filho in self.galeria_favoritos.winfo_children():
+            filho.destroy()
+        self._cards_preset = {}
+        self._thumbs_preset = []
+
+        lista = presets.carregar()
+        if not lista:
+            ctk.CTkLabel(
+                self.galeria_favoritos,
+                text="nenhum favorito ainda — gere e clique em ⭐",
+                font=ctk.CTkFont(size=11), text_color="#6a6a80",
+            ).pack(side="left", padx=8, pady=8)
+            return
+        for p in lista:
+            self._criar_card_preset(p)
+
+    def _criar_card_preset(self, preset):
+        """Um card = miniatura (imagem de referência) + nome, clicável, com um
+        ✕ no canto pra apagar. É um FRAME (não um botão) porque um botão não
+        deixa a gente pôr o ✕ por cima; então o clique de selecionar fica no
+        <Button-1> do frame e dos rótulos filhos."""
+        thumb = None
+        ref = preset.get("referencia")
+        if ref:
+            caminho = presets.PASTA_REFS / ref
+            if caminho.exists():
+                try:
+                    img = Image.open(caminho)
+                    thumb = ctk.CTkImage(light_image=img, dark_image=img, size=(104, 62))
+                    self._thumbs_preset.append(thumb)   # mantém a referência viva
+                except (OSError, ValueError):
+                    thumb = None
+
+        card = ctk.CTkFrame(
+            self.galeria_favoritos, width=116, height=100, corner_radius=8,
+            fg_color="#2a2a38", border_width=1, border_color="#34343f",
+        )
+        card.pack(side="left", padx=4, pady=6)
+        card.pack_propagate(False)   # respeita o tamanho fixo (não encolhe no conteúdo)
+
+        rot_img = ctk.CTkLabel(card, text="", image=thumb)
+        rot_img.pack(pady=(6, 2))
+        rot_nome = ctk.CTkLabel(
+            card, text=preset["nome"], font=ctk.CTkFont(size=11),
+            text_color="#e6e6f0", wraplength=108,
+        )
+        rot_nome.pack()
+        # Clique em qualquer parte do card seleciona (o frame e os dois rótulos).
+        for w in (card, rot_img, rot_nome):
+            w.bind("<Button-1>", lambda e, p=preset: self._selecionar_preset(p))
+
+        # O ✕ de apagar, no canto superior direito (por cima da miniatura).
+        fechar = ctk.CTkButton(
+            card, text="✕", width=18, height=18, corner_radius=9,
+            fg_color="#3a3a46", hover_color="#c0392b", text_color="#e6e6f0",
+            font=ctk.CTkFont(size=10),
+            command=lambda p=preset: self._apagar_favorito(p),
+        )
+        fechar.place(relx=1.0, rely=0.0, x=-3, y=3, anchor="ne")
+        self._cards_preset[preset["id"]] = card
+
+    def _selecionar_preset(self, preset):
+        """Carrega o prompt_base do preset no campo e destaca o card. Se você
+        clicar no card JÁ selecionado, DESSELECIONA (limpa destaque e prompt)."""
+        ja_era = self._preset_escolhido and self._preset_escolhido["id"] == preset["id"]
+        if ja_era:
+            self._preset_escolhido = None
+            for card in self._cards_preset.values():
+                card.configure(border_color="#34343f", border_width=1)
+            self.campo_prompt.delete("1.0", "end")
+            self.status_imagem.configure(text="Seleção limpa.")
+            return
+        self._preset_escolhido = preset
+        for id_, card in self._cards_preset.items():
+            escolhido = (id_ == preset["id"])
+            card.configure(border_color="#6c5ce7" if escolhido else "#34343f",
+                           border_width=2 if escolhido else 1)
+        self.campo_prompt.delete("1.0", "end")
+        self.campo_prompt.insert("1.0", preset["prompt_base"])
+        self.status_imagem.configure(
+            text=f"Base: {preset['nome']} — diga um personagem ou gere direto.")
+
+    def _apagar_favorito(self, preset):
+        """Apaga um favorito (com confirmação). Some da galeria na hora."""
+        from tkinter import messagebox
+        if not messagebox.askyesno("Apagar favorito", f'Apagar "{preset["nome"]}"?'):
+            return
+        presets.remover(preset["id"])
+        if self._preset_escolhido and self._preset_escolhido["id"] == preset["id"]:
+            self._preset_escolhido = None
+            self.campo_prompt.delete("1.0", "end")
+        self._recarregar_favoritos()
+        self.status_imagem.configure(text=f'🗑️ apagado: {preset["nome"]}')
+
+    def _virar_molde_click(self):
+        """Generaliza o prompt do campo: tira os traços do personagem e põe o
+        slot {personagem}, pra reusar o estilo com outro personagem. Roda numa
+        thread (usa o cérebro)."""
+        base = self.campo_prompt.get("1.0", "end").strip()
+        if not base:
+            self.status_imagem.configure(text="Sem prompt pra virar molde — escolha ou gere algo.")
+            return
+        self.status_imagem.configure(text="🎭 generalizando o estilo…")
+
+        def trabalhar():
+            try:
+                molde = imagem.generalizar_prompt(base)
+                self.after(0, lambda: self._molde_pronto(molde))
+            except imagem.ImagemError as erro:
+                self.after(0, lambda: self.status_imagem.configure(text=str(erro)))
+
+        threading.Thread(target=trabalhar, daemon=True).start()
+
+    def _molde_pronto(self, molde):
+        self.campo_prompt.delete("1.0", "end")
+        self.campo_prompt.insert("1.0", molde)
+        self.status_imagem.configure(
+            text="🎭 virou molde — diga um personagem e gere (ou ⭐ salve o molde).")
+
+    def _favoritar_click(self):
+        """Salva a última imagem gerada como um novo favorito. Pergunta só o
+        nome; o prompt e a miniatura saem da própria imagem (que já guarda o
+        prompt embutido). É a 'cópia fiel' — virar molde com {personagem} fica
+        pra depois, editando o meus.json."""
+        if not self._ultima_imagem or not Path(self._ultima_imagem).exists():
+            self.status_imagem.configure(text="Gere uma imagem antes de favoritar ⭐")
+            return
+        sugestao = ", ".join(self._ultimo_prompt.split(",")[:2]).strip()[:40] or "Favorito"
+        dialogo = ctk.CTkInputDialog(
+            title="Salvar favorito", text=f"Nome do favorito:\n(ex.: {sugestao})")
+        nome = dialogo.get_input()
+        if nome is None or not nome.strip():
+            return   # cancelou ou deixou vazio
+        nome = nome.strip()
+        id_ = presets.id_unico(nome)
+        preset = presets.importar_de_png(self._ultima_imagem, nome=nome, id_=id_)
+        if preset is None:
+            self.status_imagem.configure(text="Não consegui ler o prompt dessa imagem 🤔")
+            return
+        # Salva o que está NO CAMPO (não o prompt embutido na imagem): assim, se
+        # você virou molde antes, o favorito guarda o molde com {personagem} —
+        # sem o nome do personagem grudado. Só cai no embutido se o campo vazio.
+        do_campo = self.campo_prompt.get("1.0", "end").strip()
+        if do_campo:
+            preset["prompt_base"] = do_campo
+        presets.adicionar(preset)
+        self._recarregar_favoritos()
+        self.status_imagem.configure(text=f"⭐ salvo: {nome}")
 
     def _melhorar_prompt_click(self):
         """Manda o cérebro traduzir/expandir a descrição em português pra um
         prompt de verdade — roda numa thread (não trava a janela)."""
-        descricao = self.campo_descricao.get("1.0", "end").strip()
+        descricao = self.campo_descricao.get().strip()
         if not descricao:
             self.status_imagem.configure(text="Escreva uma descrição primeiro.")
             return
@@ -700,26 +899,39 @@ class App(ctk.CTk):
         self.status_imagem.configure(text="Prompt pronto — revise e gere quando quiser.")
 
     def _gerar_imagem_click(self):
-        """Gera a imagem a partir do prompt (usa o que estiver no campo —
-        melhorado ou digitado direto). Roda numa thread (Forge demora)."""
-        prompt = self.campo_prompt.get("1.0", "end").strip()
-        if not prompt:
-            self.status_imagem.configure(text="Sem prompt — escreva ou melhore uma descrição.")
+        """Gera a imagem: pega o prompt do campo (de um favorito ou digitado),
+        injeta o personagem no slot se você preencheu o campo, e desenha. Roda
+        numa thread (o Forge demora)."""
+        base = self.campo_prompt.get("1.0", "end").strip()
+        if not base:
+            self.status_imagem.configure(text="Sem prompt — escolha um favorito ou descreva algo.")
             return
+        pedido = self.campo_personagem.get().strip()
         self.status_imagem.configure(text="🎨 desenhando… (pode levar uns 20-30s)")
 
         def trabalhar():
-            # Se o Forge estiver fechado, o Yato ABRE ele sozinho e espera o
-            # boot antes de desenhar. Se não der, _garantir_forge já avisou.
+            # 1) Traduz o personagem (se houver) e encaixa no slot {personagem}.
+            #    Isso roda ANTES de liberar a VRAM: o Ollama ainda está de pé pra
+            #    traduzir; o gerar() logo em seguida é que o descarrega pro Forge.
+            try:
+                tag = imagem.personagem_para_tags(pedido) if pedido else ""
+            except imagem.ImagemError as erro:
+                self.after(0, lambda: self.status_imagem.configure(text=str(erro)))
+                return
+            prompt = presets.injetar(base, tag)
+
+            # 2) Se o Forge estiver fechado, o Yato ABRE ele sozinho e espera o
+            #    boot antes de desenhar. Se não der, _garantir_forge já avisou.
             if not self._garantir_forge():
                 return
             # Reafirma o status de "desenhando" (o _garantir_forge pode ter
             # deixado o aviso de "abrindo o Forge" na tela).
             self.after(0, lambda: self.status_imagem.configure(
                 text="🎨 desenhando… (pode levar uns 20-30s)"))
+            # 3) Desenha.
             try:
                 caminho = imagem.gerar(prompt)
-                self.after(0, lambda: self._imagem_pronta(caminho))
+                self.after(0, lambda: self._imagem_pronta(caminho, prompt))
             except imagem.ImagemError as erro:
                 self.after(0, lambda: self.status_imagem.configure(text=str(erro)))
 
@@ -751,15 +963,18 @@ class App(ctk.CTk):
             text="O Forge demorou demais pra abrir 😕 tenta gerar de novo em instantes."))
         return False
 
-    def _imagem_pronta(self, caminho):
-        """Mostra a imagem gerada no rótulo, redimensionada pra caber."""
+    def _imagem_pronta(self, caminho, prompt=""):
+        """Mostra a imagem gerada no rótulo, redimensionada pra caber, e guarda
+        o caminho + o prompt usado (pro botão ⭐ Favoritar poder salvar depois)."""
         img = Image.open(caminho)
-        altura = 320
+        altura = 260
         largura = int(img.width * altura / img.height)
         self._imagem_gerada_ctk = ctk.CTkImage(
             light_image=img, dark_image=img, size=(largura, altura))
         self.rotulo_imagem_gerada.configure(text="", image=self._imagem_gerada_ctk)
         self.status_imagem.configure(text=f"pronto — salvo em {caminho.name}")
+        self._ultima_imagem = caminho
+        self._ultimo_prompt = prompt
 
     def _nome_amigavel_modelo(self, titulo):
         """'novaAnimeXL_ilV190.safetensors [fa486caafc]' -> 'novaAnimeXL ilV190'
