@@ -405,6 +405,14 @@ imagem de referência, pra reusar trocando só o personagem.
 - **Seletor de LoRA**: lista os arquivos da pasta do Forge e injeta
   `<lora:nome:peso>` no prompt (peso 0–1.0). Verificado de verdade: o PNG
   gerado registra `Lora hashes:` nos metadados quando o LoRA carregou.
+- **Trigger word automática (via Civitai):** todo LoRA tem uma palavra-gatilho
+  que "liga" o estilo (a AquaInk pede `wc_painting`, por exemplo) — fácil de
+  esquecer. Ao adicionar um LoRA, o Yato calcula o **hash** do arquivo, pergunta
+  ao [Civitai](https://civitai.com) *"qual o gatilho deste LoRA?"* (casamento
+  **exato** por hash, sem chutar pelo nome) e **injeta a palavra sozinho** no
+  início do prompt. O resultado fica em cache no disco (`cache_lora_triggers.json`,
+  gitignored) — cada LoRA é consultado uma vez só. Sem internet, ou LoRA que não
+  está no Civitai? Segue sem trigger, como antes — é um extra, nunca trava nada.
 - Truque do formato A1111: **o PNG do Forge carrega o prompt embutido**
   (campo `parameters`) — importar um favorito é ler o arquivo da imagem.
 
@@ -560,9 +568,16 @@ O projeto evolui em **rodadas** — cada uma vira um commit com nome claro.
 - [x] Tamanho por molde (Quadrado / Retrato / Paisagem), renomear
       favorito, cards com checkpoint e LoRA
 
+### ✅ Rodada 13 — trigger words automáticas (Civitai) 🔌
+- [x] `trigger_de_lora(nome)`: hash SHA256 do arquivo → `/api/v1/model-versions/
+      by-hash` do Civitai → a palavra-gatilho do LoRA, com cache no disco
+- [x] Ao adicionar um LoRA, o Yato injeta a trigger no prompt sozinho (numa
+      thread + poller na thread principal, pra falar com o Tkinter em segurança)
+- [x] Descoberta honesta: o plano original (importar **prompts** das imagens do
+      Civitai) morreu — a API agora devolve `meta: null` em tudo (política deles).
+      O pivô pros triggers usa a parte que **ainda** funciona
+
 ### 💡 Depois (sem número ainda)
-- [ ] Importar prompts do **Civitai** via API (`/api/v1/images`)
-- [ ] Injetar automaticamente as *trigger words* de cada LoRA
 - [ ] Mais ferramentas (clima, lembretes, ler arquivos...)
 - [ ] Mostrar os **tokens** (como a IA "fatia" o texto em pedaços)
 - [ ] O chefão final: trocar o Ollama por código que roda o modelo direto

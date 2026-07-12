@@ -1069,6 +1069,42 @@ class App(ctk.CTk):
         self.campo_prompt.delete("1.0", "end")
         self.campo_prompt.insert("1.0", novo)
         self.status_imagem.configure(text=aviso)
+        # Só pra LoRA NOVO no prompt: busca a trigger word no Civitai e injeta
+        # sozinha (senão o LoRA carrega mas o estilo não "ativa"). Hashear o
+        # arquivo (~200 MB) + consultar leva ~1-2s na 1ª vez, então roda numa
+        # thread. A thread SÓ guarda o resultado (não toca na UI); quem aplica é
+        # o poller `_checar_trigger`, agendado por `after` na thread principal —
+        # o jeito à prova de balas de conversar com o Tkinter de outra thread.
+        if not ja_tinha:
+            self.status_imagem.configure(text=f"{aviso} · buscando trigger…")
+            self._trigger_resultado = None
+            threading.Thread(target=self._buscar_trigger_lora,
+                             args=(nome,), daemon=True).start()
+            self.after(150, lambda: self._checar_trigger(aviso))
+
+    def _buscar_trigger_lora(self, nome):
+        """(thread) Só busca a trigger word e deixa numa gaveta — NÃO mexe na UI."""
+        self._trigger_resultado = (nome, imagem.trigger_de_lora(nome))
+
+    def _checar_trigger(self, aviso):
+        """(thread principal) Espera o resultado da busca e injeta no prompt. A
+        regra de injeção mora em imagem.injetar_trigger (pura, testável)."""
+        res = self._trigger_resultado
+        if res is None:                            # ainda buscando: tenta de novo
+            self.after(150, lambda: self._checar_trigger(aviso))
+            return
+        _nome, trigger = res
+        if not trigger:
+            self.status_imagem.configure(text=f"{aviso} · (sem trigger)")
+            return
+        atual = self.campo_prompt.get("1.0", "end").strip()
+        novo = imagem.injetar_trigger(atual, trigger)
+        if novo == atual:                          # já estava lá: não mexe
+            self.status_imagem.configure(text=aviso)
+            return
+        self.campo_prompt.delete("1.0", "end")
+        self.campo_prompt.insert("1.0", novo)
+        self.status_imagem.configure(text=f"{aviso} · trigger: {trigger}")
 
     def _favoritar_click(self):
         """Salva a última imagem gerada como um novo favorito. Pergunta só o

@@ -25,6 +25,8 @@ na próxima mensagem do chat.
 """
 
 import base64
+import hashlib
+import json
 import logging
 import os
 import re
@@ -37,7 +39,11 @@ import requests
 from cerebro import OLLAMA_URL, MODELO
 
 FORGE_URL = "http://127.0.0.1:7860"
+CIVITAI_API = "https://civitai.com/api/v1"
 PASTA_IMAGENS = Path(__file__).with_name("imagens_geradas")
+# Cache no disco das trigger words dos LoRAs (nome -> {"trigger": "..."}). Cada
+# LoRA é hasheado e consultado no Civitai UMA vez; depois vem daqui, instantâneo.
+CACHE_TRIGGERS = Path(__file__).with_name("cache_lora_triggers.json")
 
 # ONDE o Forge está instalado NA SUA MÁQUINA. Ele é um app gigante À PARTE, fora
 # do repositório do Yato — por isso o caminho é absoluto e mora aqui (não no
@@ -216,6 +222,100 @@ def listar_loras():
     nomes = [arq.relative_to(PASTA_LORA).with_suffix("").as_posix()
              for arq in PASTA_LORA.rglob("*.safetensors")]
     return sorted(nomes)
+
+
+def _ler_cache_triggers():
+    """O cache de triggers do disco (leitura segura: se não existe ou corrompeu,
+    devolve vazio em vez de quebrar)."""
+    try:
+        return json.loads(CACHE_TRIGGERS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _salvar_cache_triggers(dados):
+    try:
+        CACHE_TRIGGERS.write_text(json.dumps(dados, ensure_ascii=False, indent=2),
+                                  encoding="utf-8")
+    except OSError as erro:
+        logging.warning("nao salvou o cache de triggers: %s", erro)
+
+
+def _sha256_lora(nome):
+    """O SHA256 do arquivo .safetensors do LoRA — o MESMO hash que o Civitai usa
+    pra identificar o arquivo. Lê em blocos pra não carregar 200 MB na memória.
+    None se o arquivo não existe."""
+    # Concatena a extensão em vez de .with_suffix(): nomes com ponto (ex.:
+    # "...1.0G") enganariam o with_suffix, que trocaria o ".0G" por ".safetensors".
+    caminho = PASTA_LORA / (nome + ".safetensors")
+    if not caminho.exists():
+        return None
+    h = hashlib.sha256()
+    with open(caminho, "rb") as arq:
+        for bloco in iter(lambda: arq.read(1 << 20), b""):
+            h.update(bloco)
+    return h.hexdigest()
+
+
+def _extrair_trigger(trained_words):
+    """Do campo `trainedWords` do Civitai (uma LISTA) tira a PALAVRA-gatilho.
+    Pega o 1º item e, se for uma frase longa com vírgulas (às vezes o autor cola
+    um prompt de exemplo inteiro), fica só com o trecho antes da 1ª vírgula — o
+    gatilho de verdade. '' se a lista está vazia."""
+    if not trained_words:
+        return ""
+    primeiro = (trained_words[0] or "").strip()
+    if "," in primeiro:
+        primeiro = primeiro.split(",")[0].strip()
+    return primeiro
+
+
+def trigger_de_lora(nome):
+    """A trigger word de um LoRA (ex.: 'wc_painting'), consultando o Civitai pelo
+    HASH do arquivo — casamento EXATO, sem chute pelo nome. O resultado fica em
+    cache no disco (cada LoRA é hasheado/consultado uma única vez).
+
+    Devolve '' quando: o LoRA não tem gatilho, não está no Civitai (404), ou não
+    deu pra consultar (offline). NUNCA levanta erro — é um extra; se falhar, o
+    fluxo segue sem trigger, como era antes."""
+    cache = _ler_cache_triggers()
+    if nome in cache:
+        return cache[nome].get("trigger", "")
+
+    hexhash = _sha256_lora(nome)
+    if not hexhash:
+        return ""
+
+    trigger = ""
+    try:
+        r = requests.get(f"{CIVITAI_API}/model-versions/by-hash/{hexhash}",
+                         timeout=20, headers={"User-Agent": "yato/1.0"})
+        if r.status_code == 200:
+            trigger = _extrair_trigger(r.json().get("trainedWords"))
+        elif r.status_code != 404:
+            logging.warning("Civitai by-hash (%s): HTTP %s", nome, r.status_code)
+    except requests.exceptions.RequestException as erro:
+        # Offline/timeout: NÃO grava no cache, pra tentar de novo numa próxima.
+        logging.warning("trigger_de_lora(%s) falhou: %s", nome, erro)
+        return ""
+
+    # Grava mesmo quando vazio ('' = "esse LoRA não tem trigger no Civitai"),
+    # senão a gente re-hashearia o arquivo toda vez à toa. 404 é resposta válida.
+    cache[nome] = {"trigger": trigger}
+    _salvar_cache_triggers(cache)
+    return trigger
+
+
+def injetar_trigger(prompt, trigger):
+    """Põe a `trigger` word no INÍCIO do prompt — se ela ainda não estiver lá.
+    Devolve o prompt novo (ou o mesmo, quando o trigger é vazio ou já presente).
+    A checagem usa limites de palavra pra não confundir com pedaço de outra tag.
+    Função pura (sem UI) — dá pra testar sozinha."""
+    if not trigger:
+        return prompt
+    if re.search(rf"(?<!\w){re.escape(trigger)}(?!\w)", prompt):
+        return prompt
+    return f"{trigger}, {prompt}" if prompt.strip() else trigger
 
 
 def listar_modelos():
