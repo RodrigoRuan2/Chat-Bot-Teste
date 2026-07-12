@@ -383,6 +383,31 @@ Como funciona por dentro:
   (viram garranchos), então o *prompt negativo* já bloqueia texto/marca-d'água.
 - As imagens saem em `imagens_geradas/` (é o seu conteúdo — fica no `.gitignore`).
 
+### A biblioteca de moldes ⭐
+
+A aba Imagem gira em torno de **moldes**: prompts bons que você salva junto da
+imagem de referência, pra reusar trocando só o personagem.
+
+- **O slot `{personagem}`**: o molde guarda a cena/estilo com um espaço vago.
+  Você digita o personagem **em português**, o cérebro traduz pra tag booru
+  (`personagem_para_tags`) e o código injeta no slot — troca de texto
+  **determinística**, o LLM só faz a tarefa pequena em que é confiável.
+- **🎭 Virar molde** transforma um prompt pronto em molde, em **duas camadas**:
+  o LLM remove o *nome* do personagem, e um filtro determinístico
+  (`_remover_aparencia`) corta tags de aparência (`* hair`, `* eyes`…) e temas
+  de cor (`(blue theme:1.3)` pintava até a pele do personagem novo). Motivo:
+  modelo 7B é ruim em *apagar* tags de prompt longo — etapa não-confiável
+  vira código, a regra da casa.
+- **⭐ Favoritar** salva o prompt do campo + a última imagem como referência;
+  os cards mostram miniatura, o **checkpoint** (lido dos metadados do PNG) e
+  o **LoRA** usado. Seus moldes (`presets/meus.json` + `presets/refs/`) são
+  dado pessoal — ficam no `.gitignore`.
+- **Seletor de LoRA**: lista os arquivos da pasta do Forge e injeta
+  `<lora:nome:peso>` no prompt (peso 0–1.0). Verificado de verdade: o PNG
+  gerado registra `Lora hashes:` nos metadados quando o LoRA carregou.
+- Truque do formato A1111: **o PNG do Forge carrega o prompt embutido**
+  (campo `parameters`) — importar um favorito é ler o arquivo da imagem.
+
 Pré-requisito: **instalar o Forge** e deixar a flag `--api` no `webui-user.bat`
 (o Yato o abre sozinho, mas precisa do `--api` pra falar com ele). Ele é pesado e
 roda na GPU; não vem com o `preparar.py` (é um projeto externo, instalado à parte).
@@ -520,7 +545,24 @@ O projeto evolui em **rodadas** — cada uma vira um commit com nome claro.
 - [x] O Yato abre o Forge sozinho ao gerar (acha o `webui-user.bat` via
       `YATO_FORGE`, sobe numa console própria e espera o boot)
 
+### ✅ Rodada 12 — biblioteca de moldes ⭐
+- [x] `presets.py`: moldes em JSON (leitura segura, migração por spread),
+      slot `{personagem}`, importar prompt embutido do PNG do Forge
+- [x] **Personagem em PT → tag booru**: o cérebro só traduz o personagem;
+      a injeção no molde é troca de texto determinística
+- [x] **🎭 Virar molde** em duas camadas (LLM tira o nome + filtro
+      determinístico tira aparência e temas de cor)
+- [x] Redesign da aba: janela 960×720, duas colunas, painel direito em
+      abas (🖼️ Imagem | ⭐ Favoritos) com paginação — sem
+      `CTkScrollableFrame`, que buga miniaturas ao rolar
+- [x] Seletor de **LoRA** com peso (0–1.0), verificado nos metadados
+      (`Lora hashes:`) do PNG gerado
+- [x] Tamanho por molde (Quadrado / Retrato / Paisagem), renomear
+      favorito, cards com checkpoint e LoRA
+
 ### 💡 Depois (sem número ainda)
+- [ ] Importar prompts do **Civitai** via API (`/api/v1/images`)
+- [ ] Injetar automaticamente as *trigger words* de cada LoRA
 - [ ] Mais ferramentas (clima, lembretes, ler arquivos...)
 - [ ] Mostrar os **tokens** (como a IA "fatia" o texto em pedaços)
 - [ ] O chefão final: trocar o Ollama por código que roda o modelo direto
