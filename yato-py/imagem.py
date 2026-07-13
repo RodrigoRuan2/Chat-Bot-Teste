@@ -506,6 +506,86 @@ def generalizar_prompt(prompt_en):
     return _remover_aparencia(texto)
 
 
+# --- Recomendador de prompt A PARTIR DE UMA IMAGEM (visão → tags → moldes) ---
+_PROMPT_VISAO_ATRIBUTOS = (
+    "Liste, em tópicos curtos, os atributos VISÍVEIS desta imagem úteis para "
+    "recriá-la num gerador de imagem: número de pessoas, enquadramento/"
+    "composição, pose, expressão, cabelo, roupa, iluminação, fundo/cenário e "
+    "ESTILO de arte (ex.: aquarela, digital, lineart, pintura). NÃO tente "
+    "adivinhar o nome do personagem nem de qual anime é.")
+
+_PROMPT_SISTEMA_DA_IMAGEM = (
+    "Você converte a descrição de uma imagem num prompt para Stable Diffusion "
+    "(modelos booru/Illustrious).\n"
+    "Devolva EXATAMENTE {n} variações, UMA POR LINHA, no formato:\n"
+    "PROMPT ||| RESUMO\n"
+    "onde PROMPT é o prompt em INGLÊS (só tags booru curtas separadas por "
+    "vírgula) e RESUMO é uma frase curtíssima em PORTUGUÊS do que a imagem vai "
+    "mostrar (pra quem não lê inglês entender).\n"
+    "REGRAS:\n"
+    "- No PROMPT, traduza TUDO para inglês. Use tags booru padrão (1girl, solo, "
+    "portrait, close-up, long hair, black dress, dramatic lighting, dark "
+    "background, digital art...).\n"
+    "- Cubra: nº de pessoas, enquadramento, cabelo, roupa, expressão, luz, "
+    "fundo e estilo de arte.\n"
+    "- NÃO invente nome de personagem nem de anime.\n"
+    "- As variações devem diferir no enquadramento ou na ênfase.\n"
+    "- Sem numeração, sem texto extra além do formato PROMPT ||| RESUMO.\n"
+    "IMPORTANTE: sua resposta deve ter EXATAMENTE {n} LINHAS (uma variação por "
+    "linha). NÃO pare depois da primeira — escreva as {n} variações.")
+
+
+def _parsear_variacoes(bruto, n):
+    """Do texto do cérebro (várias linhas no formato 'PROMPT ||| RESUMO') tira até
+    `n` pares (prompt_en, resumo_pt), limpos de numeração/bullets. Se uma linha
+    não trouxer o resumo, devolve resumo vazio (o app cai num texto padrão)."""
+    pares = []
+    for ln in bruto.splitlines():
+        ln = re.sub(r"^\s*(?:\d+[.\)]|[-*•])\s*", "", ln.strip()).strip()
+        if "|||" in ln:
+            en, pt = ln.split("|||", 1)
+            en, pt = en.strip().strip('"'), pt.strip().strip('"')
+        else:
+            en, pt = ln.strip('"'), ""
+        if en and "," in en:              # linha de prompt tem vírgulas
+            pares.append((en, pt))
+    return pares[:n]
+
+
+def prompt_de_imagem(imagem_b64, n=3):
+    """A partir de uma IMAGEM (base64), devolve até `n` sugestões — cada uma um
+    par (molde, resumo_pt): o MOLDE de prompt (com o slot {personagem}) e um
+    resumo curto em português do que vai sair. Três etapas:
+      1. o olho (ver_imagem) descreve o que está VISÍVEL na imagem;
+      2. o cérebro monta as tags booru em inglês + o resumo em PT (n variações);
+      3. o filtro determinístico tira a aparência e põe o {personagem} na frente.
+    De propósito NÃO identifica quem é o personagem (o 7B erra nomes) — você
+    preenche o slot depois. Levanta ImagemError com recado claro se algo faltar."""
+    if not imagem_b64:
+        raise ImagemError("Cole (Ctrl+V) ou anexe uma imagem primeiro 🖼️")
+    from ferramentas import ver_imagem   # lazy: evita qualquer import circular
+    descricao = ver_imagem(_PROMPT_VISAO_ATRIBUTOS, imagem_b64=imagem_b64)
+    if descricao.startswith("("):        # ver_imagem devolve os erros entre ()
+        raise ImagemError("Não consegui olhar a imagem — o Ollama e o modelo de "
+                          "visão estão no ar?")
+    usuario = (f"{descricao}\n\nAgora gere as {n} variações (uma por linha, "
+               f"formato PROMPT ||| RESUMO):")
+    bruto = _perguntar_cerebro(
+        _PROMPT_SISTEMA_DA_IMAGEM.replace("{n}", str(n)), usuario,
+        num_predict=420, temperatura=0.8, timeout=120,
+        erro_falha="Não consegui montar o prompt da imagem — tenta de novo?")
+    pares = _parsear_variacoes(bruto, n)
+    if not pares:
+        raise ImagemError("O cérebro não devolveu um prompt utilizável — tenta outra imagem?")
+    sugestoes = []
+    for en, pt in pares:
+        if "masterpiece" not in en.lower():   # garante as tags de qualidade
+            en = f"{en}, {TAGS_QUALIDADE}"
+        molde = _remover_aparencia("{personagem}, " + en)
+        sugestoes.append((molde, pt))
+    return sugestoes
+
+
 def gerar(prompt, negativo=None, passos=25, largura=768, altura=768):
     """Gera a imagem: libera a VRAM do Ollama, chama o Forge, salva o PNG em
     imagens_geradas/ e devolve o Path do arquivo."""

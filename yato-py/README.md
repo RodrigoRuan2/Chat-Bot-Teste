@@ -416,6 +416,23 @@ imagem de referência, pra reusar trocando só o personagem.
 - Truque do formato A1111: **o PNG do Forge carrega o prompt embutido**
   (campo `parameters`) — importar um favorito é ler o arquivo da imagem.
 
+### 🔍 Prompt a partir de uma imagem
+
+Viu uma arte que gostou? **Cola (Ctrl+V) ou anexa (📎)** ela na aba Imagem e o
+Yato faz a "engenharia reversa" do prompt — em três etapas:
+
+1. **O olho** (`ver_imagem`, o `qwen2.5vl`) descreve o que está VISÍVEL:
+   enquadramento, pose, roupa, luz, fundo, estilo de arte;
+2. **O cérebro** (`qwen2.5`) transforma isso em tags booru em inglês — em
+   **2-3 variações** pra você escolher;
+3. O **filtro determinístico** (o mesmo do "virar molde") tira a aparência e põe
+   o slot `{personagem}` — ou seja, você recebe um **molde pronto**: colou uma
+   imagem, é só trocar o personagem e gerar aquela mesma cena/luz.
+
+Honestidade: o Yato **não tenta adivinhar** quem é o personagem nem de qual anime
+(o modelo local de 7B erra nomes — você preenche o `{personagem}`). Ele é bom nos
+**atributos visíveis**; identificar a obra exata, não.
+
 Pré-requisito: **instalar o Forge** e deixar a flag `--api` no `webui-user.bat`
 (o Yato o abre sozinho, mas precisa do `--api` pra falar com ele). Ele é pesado e
 roda na GPU; não vem com o `preparar.py` (é um projeto externo, instalado à parte).
@@ -577,7 +594,28 @@ O projeto evolui em **rodadas** — cada uma vira um commit com nome claro.
       Civitai) morreu — a API agora devolve `meta: null` em tudo (política deles).
       O pivô pros triggers usa a parte que **ainda** funciona
 
+### ✅ Rodada 14 — prompt a partir de uma imagem 🔍
+- [x] `imagem.prompt_de_imagem`: olho descreve → cérebro monta tags booru +
+      um **resumo em PT** (2-3 variações) → filtro põe o `{personagem}` → molde
+      pronto, é só trocar
+- [x] Recebe imagem colada (Ctrl+V) **ou** anexada (📎) na aba Imagem, com
+      **miniatura** da referência (feedback do que carregou); integra com o
+      gerar (mesmo slot dos favoritos)
+- [x] As variações vivem numa **aba 🔍 Sugestões** (painel direito) — ficam
+      fixas, usar uma não apaga as outras; cada card mostra o resumo em PT + o
+      prompt em inglês
+- [x] System prompt firme ("traduza TUDO pro inglês, tags booru", "EXATAMENTE N
+      linhas") — sem isso o 7B vazava português e parava numa variação só
+- [x] Janela padrão maior (960×720 → **1100×820**) + coluna de controles menos
+      apertada: a aba Imagem ganhou muita coisa e pedia respiro
+- [x] Clicar em 🔍 Prompt da imagem já pula pra aba Sugestões (com "analisando…")
+- [x] Galeria de favoritos redesenhada (estilo "capa"): imagem preenche o card,
+      nome + chips de modelo/LoRA por cima num degradê, 4 cards grandes por página
+      (o degradê é assado na miniatura — o Tk não compõe transparência sobre imagem)
+
 ### 💡 Depois (sem número ainda)
+- [ ] Sugerir o checkpoint/LoRA que combina com a imagem (via descrição do Civitai)
+- [ ] Variações mais distintas (hoje o 7B mais reformula que reinventa)
 - [ ] Mais ferramentas (clima, lembretes, ler arquivos...)
 - [ ] Mostrar os **tokens** (como a IA "fatia" o texto em pedaços)
 - [ ] O chefão final: trocar o Ollama por código que roda o modelo direto

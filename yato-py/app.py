@@ -110,7 +110,7 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Yato — IA local")
-        self.geometry("960x720")
+        self.geometry("1100x820")
         self.minsize(760, 560)
 
         # Sem isto, o Windows agrupa a janela sob o ícone do 'pythonw' na barra
@@ -148,6 +148,7 @@ class App(ctk.CTk):
         self.texto_parcial = ""      # o que já chegou da resposta atual
         self.fonte_atual = ""        # o que a última pesquisa trouxe (pro "continua")
         self.imagem_anexada = ""     # a imagem colada/anexada (base64), 1 por mensagem
+        self.imagem_ref_b64 = ""     # imagem de referência da aba Imagem (pro "🔍 Prompt da imagem")
         self.modo_view = "chat"      # "chat" ou "imagem" (avatar virou on/off à parte)
         self.voz_ligada = False      # o Yato lê as respostas em voz alta?
         self.ouvindo = False         # o microfone está gravando agora?
@@ -665,16 +666,17 @@ class App(ctk.CTk):
         ctk.CTkLabel(col_esq, text="Personagem (opcional — o Yato encaixa no preset):",
                      font=ctk.CTkFont(size=12), anchor="w").pack(fill="x", pady=(0, 4))
         self.campo_personagem = ctk.CTkEntry(
-            col_esq, placeholder_text="gojo, rias gremory, uma garota de cabelo azul…")
-        self.campo_personagem.pack(fill="x", pady=(0, 10))
+            col_esq, height=36,
+            placeholder_text="gojo, rias gremory, uma garota de cabelo azul…")
+        self.campo_personagem.pack(fill="x", pady=(0, 16))
 
         ctk.CTkLabel(col_esq, text="Prompt (inglês — pode editar antes de gerar):",
                      font=ctk.CTkFont(size=12), anchor="w").pack(fill="x", pady=(0, 4))
-        self.campo_prompt = ctk.CTkTextbox(col_esq, height=118)
+        self.campo_prompt = ctk.CTkTextbox(col_esq, height=150)
         self.campo_prompt.pack(fill="x")
 
         linha_molde = ctk.CTkFrame(col_esq, fg_color="transparent")
-        linha_molde.pack(fill="x", pady=(4, 0))
+        linha_molde.pack(fill="x", pady=(10, 0))
         ctk.CTkButton(linha_molde, text="🎭 Virar molde", width=120, height=26,
                       fg_color="transparent", border_width=1, text_color="#c9b8ff",
                       font=ctk.CTkFont(size=11), command=self._virar_molde_click).pack(side="left")
@@ -683,7 +685,7 @@ class App(ctk.CTk):
 
         # ---- LoRA: escolhe da pasta + peso, e injeta <lora:nome:peso> no prompt
         linha_lora = ctk.CTkFrame(col_esq, fg_color="#1f1f2a", corner_radius=8)
-        linha_lora.pack(fill="x", pady=(8, 0))
+        linha_lora.pack(fill="x", pady=(14, 0))
         ctk.CTkLabel(linha_lora, text="LoRA:", font=ctk.CTkFont(size=11),
                      text_color="#8a8aa0").pack(side="left", padx=(8, 4), pady=6)
         self.seletor_lora = ctk.CTkOptionMenu(
@@ -702,7 +704,7 @@ class App(ctk.CTk):
         self._recarregar_loras()
 
         linha_livre = ctk.CTkFrame(col_esq, fg_color="#1f1f2a", corner_radius=8)
-        linha_livre.pack(fill="x", pady=(8, 10))
+        linha_livre.pack(fill="x", pady=(14, 8))
         ctk.CTkLabel(linha_livre, text="Modo livre:", font=ctk.CTkFont(size=11),
                      text_color="#8a8aa0").pack(side="left", padx=(8, 6), pady=6)
         self.campo_descricao = ctk.CTkEntry(
@@ -711,8 +713,30 @@ class App(ctk.CTk):
         ctk.CTkButton(linha_livre, text="✨ Melhorar", width=90,
                       command=self._melhorar_prompt_click).pack(side="left", padx=6, pady=6)
 
+        # ---- Prompt A PARTIR DE UMA IMAGEM: cola/anexa uma imagem e o Yato
+        #      "engenharia reversa" um molde de prompt (com {personagem}) dela.
+        linha_daimg = ctk.CTkFrame(col_esq, fg_color="#1f1f2a", corner_radius=8)
+        linha_daimg.pack(fill="x", pady=(0, 14))
+        ctk.CTkButton(linha_daimg, text="🔍 Prompt da imagem", width=150, height=28,
+                      font=ctk.CTkFont(size=11),
+                      command=self._prompt_de_imagem_click).pack(side="left", padx=(8, 6), pady=6)
+        ctk.CTkButton(linha_daimg, text="📎", width=32, height=28, fg_color="transparent",
+                      border_width=1, command=self._anexar_ref_imagem).pack(side="left", pady=6)
+        # Miniatura da imagem carregada (feedback de "o que está na referência" e
+        # de que a troca funcionou) — fica escondida até você colar/anexar algo.
+        self.thumb_ref = ctk.CTkLabel(linha_daimg, text="", width=40, height=40,
+                                      fg_color="#14141c", corner_radius=6)
+        self._thumb_ref_img = None     # segura a PhotoImage viva
+        self.rotulo_ref_img = ctk.CTkLabel(linha_daimg, text="cole (Ctrl+V) ou anexe 📎",
+                                           font=ctk.CTkFont(size=10), text_color="#6a6a80")
+        self.rotulo_ref_img.pack(side="left", padx=8)
+        # Ctrl+V no campo de prompt: se o clipboard tem IMAGEM, vira referência;
+        # senão, deixa colar texto normal (mesma ideia do Ctrl+V do chat).
+        self.campo_prompt.bind("<Control-v>", self._colar_ref)
+        self.campo_prompt.bind("<Control-V>", self._colar_ref)
+
         linha_gerar = ctk.CTkFrame(col_esq, fg_color="transparent")
-        linha_gerar.pack(fill="x", pady=(0, 4))
+        linha_gerar.pack(fill="x", pady=(8, 4))
         ctk.CTkButton(linha_gerar, text="🎨 Gerar",
                       command=self._gerar_imagem_click).pack(side="left")
         ctk.CTkButton(linha_gerar, text="⭐ Favoritar", width=110,
@@ -725,7 +749,8 @@ class App(ctk.CTk):
         # Um espaço, dois usos: a imagem grande OU a galeria de favoritos. Cada
         # aba usa o painel inteiro, então nada fica apertado.
         self.abas_dir = ctk.CTkSegmentedButton(
-            col_dir, values=["🖼️ Imagem", "⭐ Favoritos"], command=self._trocar_aba_dir)
+            col_dir, values=["🖼️ Imagem", "⭐ Favoritos", "🔍 Sugestões"],
+            command=self._trocar_aba_dir)
         self.abas_dir.set("🖼️ Imagem")
         self.abas_dir.pack(fill="x", pady=(0, 6))
 
@@ -766,6 +791,13 @@ class App(ctk.CTk):
                                           text_color="#8a8aa0")
         self.rotulo_pagina.pack()
 
+        # -- painel SUGESTÕES (as 2-3 variações do "🔍 Prompt da imagem") --
+        self.painel_sugestoes = ctk.CTkFrame(col_dir, fg_color="transparent")
+        self.lista_sugestoes = ctk.CTkFrame(
+            self.painel_sugestoes, fg_color="#20202c", corner_radius=8)
+        self.lista_sugestoes.pack(fill="both", expand=True)
+        self._placeholder_sugestoes()
+
         self.painel_imagem.pack(fill="both", expand=True)   # começa na aba Imagem
 
         # ---- estado + primeira carga dos favoritos ----
@@ -785,12 +817,15 @@ class App(ctk.CTk):
         self._recarregar_favoritos()
 
     def _trocar_aba_dir(self, valor):
-        """Alterna o painel direito entre a imagem e a galeria de favoritos."""
+        """Alterna o painel direito entre a imagem, os favoritos e as sugestões."""
+        self.painel_imagem.pack_forget()
+        self.painel_favoritos.pack_forget()
+        self.painel_sugestoes.pack_forget()
         if "Favoritos" in valor:
-            self.painel_imagem.pack_forget()
             self.painel_favoritos.pack(fill="both", expand=True)
+        elif "Sugestões" in valor:
+            self.painel_sugestoes.pack(fill="both", expand=True)
         else:
-            self.painel_favoritos.pack_forget()
             self.painel_imagem.pack(fill="both", expand=True)
             self._reencaixar_imagem()   # o painel pode ter mudado enquanto oculto
 
@@ -844,91 +879,110 @@ class App(ctk.CTk):
         self._pagina_favoritos += 1          # o clamp no _recarregar segura o limite
         self._recarregar_favoritos()
 
+    # tamanho dos cards grandes da galeria (2×2 cabe no painel a 1100px)
+    CARD_W, CARD_H = 296, 278
+
+    def _thumb_card(self, caminho, w, h):
+        """Miniatura que PREENCHE o card (corta pra cobrir, tipo object-fit:cover)
+        com um degradê escuro assado no rodapé — pro título/chips por cima ficarem
+        legíveis (o Tkinter não compõe transparência de widget sobre imagem, então
+        o degradê vai NA imagem)."""
+        img = Image.open(caminho).convert("RGB")
+        escala = max(w / img.width, h / img.height)          # cobre (não deixa borda)
+        img = img.resize((max(1, round(img.width * escala)),
+                          max(1, round(img.height * escala))), Image.LANCZOS)
+        esq, topo = (img.width - w) // 2, (img.height - h) // 2   # corte centralizado
+        img = img.crop((esq, topo, esq + w, topo + h)).convert("RGBA")
+        # scrim: transparente no topo, escurece até ~#080810 no rodapé
+        grad = Image.new("L", (1, h), 0)
+        px = grad.load()
+        ini, cheio = int(h * 0.40), int(h * 0.72)
+        for y in range(h):
+            px[0, y] = 0 if y <= ini else min(240, int(240 * (y - ini) / max(1, cheio - ini)))
+        scrim = Image.new("RGBA", (w, h), (8, 8, 16, 255))
+        scrim.putalpha(grad.resize((w, h)))
+        return ImageTk.PhotoImage(Image.alpha_composite(img, scrim))
+
     def _criar_card_preset(self, preset, indice):
-        """Um card na fileira de favoritos: miniatura (proporção preservada) numa
-        moldura quadrada + nome + modelo, com ✏️/✕ no topo. Clicar seleciona e
-        mostra a referência GRANDE na direita."""
-        thumb = None
+        """Um card GRANDE da galeria (estilo Opção B): a imagem preenche o card e
+        o nome + chips de modelo/LoRA ficam POR CIMA, no rodapé. ✏️ renomear no
+        topo-esquerda, ✕ apagar no topo-direita. Clicar seleciona."""
+        w, h = self.CARD_W, self.CARD_H
         ref = preset.get("referencia")
-        if ref:
-            thumb = self._cache_thumbs.get(ref)   # já fizemos essa? reusa
+        thumb = self._cache_thumbs.get(ref) if ref else None
+        if thumb is None and ref:
             caminho = presets.PASTA_REFS / ref
-            if thumb is None and caminho.exists():
+            if caminho.exists():
                 try:
-                    img = Image.open(caminho).convert("RGBA")
-                    # Encaixa na moldura mantendo a proporção (quadrado fica
-                    # quadrado, retrato fica retrato) — nada de esticar.
-                    razao = min(206 / img.width, 116 / img.height)
-                    tam = (max(1, int(img.width * razao)), max(1, int(img.height * razao)))
-                    # PhotoImage + LANCZOS: downscale suave e nítido.
-                    thumb = ImageTk.PhotoImage(img.resize(tam, Image.LANCZOS))
+                    thumb = self._thumb_card(caminho, w, h)
                     self._cache_thumbs[ref] = thumb
                 except (OSError, ValueError):
                     thumb = None
 
         card = ctk.CTkFrame(
-            self.galeria_favoritos, width=224, height=192, corner_radius=8,
-            fg_color="#2a2a38", border_width=1, border_color="#34343f",
-        )
+            self.galeria_favoritos, width=w, height=h, corner_radius=10,
+            fg_color="#14141c", border_width=1, border_color="#34343f")
         card.grid(row=indice // 2, column=indice % 2, padx=6, pady=6, sticky="n")
-        card.pack_propagate(False)   # respeita o tamanho fixo
+        card.grid_propagate(False)
+        card.pack_propagate(False)
 
-        # Moldura QUADRADA (corner_radius=0) pra miniatura — o fundo escuro dela
-        # preenche as sobras da proporção (letterbox), sem "buraco" pro fundo.
-        moldura = ctk.CTkFrame(card, fg_color="#14141c", corner_radius=0, height=120)
-        moldura.pack(fill="x", padx=6, pady=(6, 2))
-        moldura.pack_propagate(False)
-        # tk.Label (não CTkLabel) porque a miniatura é uma PhotoImage comum.
-        rot_img = tk.Label(moldura, image=thumb, bg="#14141c", bd=0, highlightthickness=0)
-        rot_img.pack(expand=True)
+        # imagem preenchendo o card (ou placeholder se faltar a referência)
+        if thumb is not None:
+            fundo = tk.Label(card, image=thumb, bd=0, highlightthickness=0, bg="#14141c")
+        else:
+            fundo = ctk.CTkLabel(card, text="sem imagem", text_color="#6a6a80",
+                                 font=ctk.CTkFont(size=11), fg_color="#14141c")
+        fundo.place(x=0, y=0, relwidth=1, relheight=1)
 
+        # rodapé (nome + chips) por cima do degradê assado
+        info = ctk.CTkFrame(card, fg_color="#080810", corner_radius=0)
+        info.place(relx=0, rely=1.0, anchor="sw", relwidth=1)
         rot_nome = ctk.CTkLabel(
-            card, text=preset["nome"], font=ctk.CTkFont(size=12),
-            text_color="#e6e6f0", wraplength=210,
-        )
-        rot_nome.pack()
+            info, text=preset["nome"], font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#ffffff", fg_color="#080810", anchor="w", justify="left",
+            wraplength=w - 24)
+        rot_nome.pack(fill="x", padx=10, pady=(6, 2))
+        chips = ctk.CTkFrame(info, fg_color="#080810")
+        chips.pack(fill="x", padx=8, pady=(0, 9))
         modelo = self._nome_amigavel_modelo(preset["modelo"]) if preset.get("modelo") else "—"
-        rot_modelo = ctk.CTkLabel(
-            card, text=modelo, font=ctk.CTkFont(size=9),
-            text_color="#7c6df0", wraplength=210,
-        )
-        rot_modelo.pack()
-        # LoRA(s) usados — lidos do próprio prompt_base (<lora:nome:peso>), com o
-        # peso em %. Fica em verde-água pra não confundir com o modelo (roxo).
+        chip_mod = ctk.CTkLabel(
+            chips, text=f" {modelo} ", font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="#c9b8ff", fg_color="#2f2a4a", corner_radius=8)
+        chip_mod.pack(side="left", padx=(2, 4))
+        # LoRA(s) do próprio prompt_base (<lora:nome:peso>), peso em %.
         loras = re.findall(r"<lora:([^:>]+):([0-9.]+)>", preset.get("prompt_base", ""))
+        chip_lora = None
         if loras:
             curto = loras[0][0].split(" - ")[0].replace("_", " ").strip()
-            if len(curto) > 15:
-                curto = curto[:15] + "…"
-            txt_lora = f"🎛️ {curto} {int(round(float(loras[0][1]) * 100))}%"
+            if len(curto) > 14:
+                curto = curto[:14] + "…"
+            txt = f" {curto} {int(round(float(loras[0][1]) * 100))}% "
             if len(loras) > 1:
-                txt_lora += f" +{len(loras) - 1}"
-        else:
-            txt_lora = ""   # sem LoRA: linha reservada, cards ficam do mesmo tamanho
-        rot_lora = ctk.CTkLabel(
-            card, text=txt_lora, font=ctk.CTkFont(size=10),
-            text_color="#7fd4c1", wraplength=210,
-        )
-        rot_lora.pack()
-        for w in (card, moldura, rot_img, rot_nome, rot_modelo, rot_lora):
-            w.bind("<Button-1>", lambda e, p=preset: self._selecionar_preset(p))
+                txt = txt[:-1] + f"+{len(loras) - 1} "
+            chip_lora = ctk.CTkLabel(
+                chips, text=txt, font=ctk.CTkFont(size=10, weight="bold"),
+                text_color="#7fd4c1", fg_color="#1f3a35", corner_radius=8)
+            chip_lora.pack(side="left")
 
-        # ✕ apagar (direita) e ✏️ renomear (esquerda), por cima da miniatura —
-        # SEM box (fg transparente), só o símbolo; o fundo aparece só no hover.
-        fechar = ctk.CTkButton(
-            card, text="✕", width=20, height=20, corner_radius=6,
-            fg_color="transparent", hover_color="#c0392b", text_color="#ffffff",
+        # clicar em qualquer área "morta" do card = selecionar
+        for wid in (card, fundo, info, rot_nome, chips, chip_mod):
+            wid.bind("<Button-1>", lambda e, p=preset: self._selecionar_preset(p))
+        if chip_lora is not None:
+            chip_lora.bind("<Button-1>", lambda e, p=preset: self._selecionar_preset(p))
+
+        # ✏ renomear (topo-esq, pílula) e ✕ apagar (topo-dir)
+        ctk.CTkButton(
+            card, text="✏ renomear", width=94, height=24, corner_radius=12,
+            fg_color="#161620", hover_color="#3a3358", text_color="#c9b8ff",
+            font=ctk.CTkFont(size=11),
+            command=lambda p=preset: self._renomear_favorito(p),
+        ).place(relx=0.0, rely=0.0, x=8, y=8, anchor="nw")
+        ctk.CTkButton(
+            card, text="✕", width=26, height=24, corner_radius=8,
+            fg_color="#161620", hover_color="#c0392b", text_color="#ffffff",
             font=ctk.CTkFont(size=12, weight="bold"),
             command=lambda p=preset: self._apagar_favorito(p),
-        )
-        fechar.place(relx=1.0, rely=0.0, x=-3, y=3, anchor="ne")
-        renomear = ctk.CTkButton(
-            card, text="✏", width=20, height=20, corner_radius=6,
-            fg_color="transparent", hover_color="#6c5ce7", text_color="#ffffff",
-            font=ctk.CTkFont(size=12),
-            command=lambda p=preset: self._renomear_favorito(p),
-        )
-        renomear.place(relx=0.0, rely=0.0, x=3, y=3, anchor="nw")
+        ).place(relx=1.0, rely=0.0, x=-8, y=8, anchor="ne")
         self._cards_preset[preset["id"]] = card
 
     def _selecionar_preset(self, preset):
@@ -1158,6 +1212,136 @@ class App(ctk.CTk):
         self.campo_prompt.delete("1.0", "end")
         self.campo_prompt.insert("1.0", prompt)
         self.status_imagem.configure(text="Prompt pronto — revise e gere quando quiser.")
+
+    # ---- Prompt a partir de uma imagem (visão → tags → moldes) ----
+    def _colar_ref(self, _evento):
+        """Ctrl+V no campo de prompt: se o clipboard tem IMAGEM, vira referência
+        (e cancela a colagem de texto); senão, deixa colar texto normalmente."""
+        dado = ImageGrab.grabclipboard()
+        if isinstance(dado, Image.Image):
+            self._set_ref_imagem(dado)
+            return "break"
+        if isinstance(dado, list):
+            for caminho in dado:
+                if str(caminho).lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".webp")):
+                    try:
+                        self._set_ref_imagem(Image.open(caminho))
+                        return "break"
+                    except OSError:
+                        logging.exception("Não consegui abrir a imagem colada (ref)")
+        return None
+
+    def _anexar_ref_imagem(self):
+        """Botão 📎 da aba Imagem: escolher um arquivo de imagem de referência."""
+        caminho = filedialog.askopenfilename(
+            title="Escolher imagem de referência",
+            filetypes=[("Imagens", "*.png *.jpg *.jpeg *.bmp *.webp")])
+        if caminho:
+            try:
+                self._set_ref_imagem(Image.open(caminho))
+            except OSError:
+                logging.exception("Não consegui abrir a imagem escolhida (ref)")
+
+    def _set_ref_imagem(self, img):
+        """Guarda a imagem de referência (encolhida + base64), mostra uma
+        MINIATURA dela (feedback: você vê o que carregou e quando troca) e
+        atualiza o rótulo."""
+        img = img.convert("RGB")
+        img.thumbnail((1344, 1344))
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        self.imagem_ref_b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+        # miniatura 40x40 ao lado do botão (CTkImage = nítida em HighDPI)
+        mini = img.copy()
+        mini.thumbnail((160, 160))
+        self._thumb_ref_img = ctk.CTkImage(light_image=mini, dark_image=mini, size=(40, 40))
+        self.thumb_ref.configure(image=self._thumb_ref_img, text="")
+        self.thumb_ref.pack(side="right", padx=(0, 8), pady=4)   # idempotente
+        self.rotulo_ref_img.configure(text="imagem pronta ✓ (Ctrl+V troca)",
+                                      text_color="#7fd4c1")
+
+    def _prompt_de_imagem_click(self):
+        """Cola/anexa uma imagem → o Yato olha e sugere 2-3 moldes de prompt. O
+        trabalho (visão + cérebro, ~30s) roda numa thread; um poller na thread
+        principal mostra as opções quando ficam prontas (jeito seguro no Tkinter)."""
+        if not self.imagem_ref_b64:
+            self.status_imagem.configure(text="Cole (Ctrl+V) ou anexe 📎 uma imagem primeiro 🖼️")
+            return
+        # Já pula pra aba Sugestões mostrando "analisando…" — você acompanha o
+        # trabalho ali em vez de ficar na aba Imagem esperando 30s.
+        self._sugestoes_carregando()
+        self.abas_dir.set("🔍 Sugestões")
+        self._trocar_aba_dir("🔍 Sugestões")
+        self.status_imagem.configure(text="🔍 olhando a imagem e montando prompts… (~30s)")
+        self._moldes_resultado = None
+        threading.Thread(target=self._buscar_moldes_imagem, daemon=True).start()
+        self.after(200, self._checar_moldes_imagem)
+
+    def _buscar_moldes_imagem(self):
+        """(thread) Só roda o pipeline e guarda o resultado — não toca na UI."""
+        try:
+            self._moldes_resultado = ("ok", imagem.prompt_de_imagem(self.imagem_ref_b64, n=3))
+        except imagem.ImagemError as erro:
+            self._moldes_resultado = ("erro", str(erro))
+
+    def _checar_moldes_imagem(self):
+        """(thread principal) Espera o resultado e mostra as opções (ou o erro)."""
+        res = self._moldes_resultado
+        if res is None:
+            self.after(200, self._checar_moldes_imagem)
+            return
+        estado, dado = res
+        if estado == "erro":
+            self._aviso_sugestoes(dado)          # mostra o erro na própria aba
+            self.status_imagem.configure(text=dado)
+            return
+        self._popular_sugestoes(dado)
+        self.status_imagem.configure(text="Sugestões prontas 👇 (clique em 'Usar este')")
+
+    def _aviso_sugestoes(self, texto):
+        """Mensagem centralizada na aba Sugestões (placeholder / carregando / erro)."""
+        for filho in self.lista_sugestoes.winfo_children():
+            filho.destroy()
+        ctk.CTkLabel(self.lista_sugestoes, text=texto, font=ctk.CTkFont(size=12),
+                     text_color="#8a8aa0", justify="center").pack(expand=True, padx=8, pady=40)
+
+    def _placeholder_sugestoes(self):
+        """Texto inicial da aba Sugestões (antes de rodar o 🔍 Prompt da imagem)."""
+        self._aviso_sugestoes("cole/anexe uma imagem e clique em\n🔍 Prompt da imagem")
+
+    def _sugestoes_carregando(self):
+        """Estado de 'analisando' na aba Sugestões, enquanto o pipeline roda."""
+        self._aviso_sugestoes("🔍 analisando a imagem…\nmontando 3 sugestões de prompt (~30s)")
+
+    def _popular_sugestoes(self, sugestoes):
+        """Preenche a aba 🔍 Sugestões com as 2-3 variações. Cada card mostra o
+        resumo em PORTUGUÊS (o que vai sair), o prompt em inglês e um 'Usar este'.
+        Os cards FICAM — usar um não apaga os outros (você compara à vontade)."""
+        for filho in self.lista_sugestoes.winfo_children():
+            filho.destroy()
+        for i, (molde, resumo) in enumerate(sugestoes, 1):
+            card = ctk.CTkFrame(self.lista_sugestoes, fg_color="#1f1f2a", corner_radius=8)
+            card.pack(fill="x", padx=8, pady=(8, 0) if i == 1 else 6)
+            topo = ctk.CTkFrame(card, fg_color="transparent")
+            topo.pack(fill="x", padx=10, pady=(8, 0))
+            ctk.CTkLabel(topo, text=f"Opção {i}", font=ctk.CTkFont(size=11, weight="bold"),
+                         text_color="#c9b8ff").pack(side="left")
+            ctk.CTkButton(topo, text="Usar este", width=84, height=24,
+                          font=ctk.CTkFont(size=11),
+                          command=lambda m=molde: self._usar_molde_sugerido(m)).pack(side="right")
+            if resumo:
+                ctk.CTkLabel(card, text=resumo, font=ctk.CTkFont(size=12),
+                             text_color="#e0e0ea", wraplength=440, justify="left",
+                             anchor="w").pack(fill="x", padx=10, pady=(4, 0))
+            ctk.CTkLabel(card, text=molde, font=ctk.CTkFont(size=10),
+                         text_color="#8a8aa0", wraplength=440, justify="left",
+                         anchor="w").pack(fill="x", padx=10, pady=(2, 8))
+
+    def _usar_molde_sugerido(self, molde):
+        self.campo_prompt.delete("1.0", "end")
+        self.campo_prompt.insert("1.0", molde)
+        self.status_imagem.configure(
+            text="Prompt aplicado ✓ — preencha o Personagem e gere (as sugestões seguem na aba).")
 
     def _gerar_imagem_click(self):
         """Gera a imagem: pega o prompt do campo (de um favorito ou digitado),
