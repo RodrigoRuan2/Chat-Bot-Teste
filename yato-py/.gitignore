@@ -31,6 +31,8 @@ presets/refs/
 
 # Cache das trigger words dos LoRAs (derivado do Civitai; regenera sozinho)
 cache_lora_triggers.json
+# Cache do perfil de estilo dos LoRAs (pra recomendar; derivado do Civitai)
+cache_catalogo.json
 
 # O Electron do avatar (~200 MB) é baixado pelo npm install (o preparar.py roda).
 # Só o código (main.js/preload.js/package.json) vai pro repo.

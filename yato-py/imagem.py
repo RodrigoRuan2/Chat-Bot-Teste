@@ -44,6 +44,9 @@ PASTA_IMAGENS = Path(__file__).with_name("imagens_geradas")
 # Cache no disco das trigger words dos LoRAs (nome -> {"trigger": "..."}). Cada
 # LoRA é hasheado e consultado no Civitai UMA vez; depois vem daqui, instantâneo.
 CACHE_TRIGGERS = Path(__file__).with_name("cache_lora_triggers.json")
+# Cache do PERFIL de estilo de cada LoRA (nome -> {nome, baseModel, tags, desc}),
+# usado pra RECOMENDAR a LoRA que combina com uma imagem.
+CACHE_CATALOGO = Path(__file__).with_name("cache_catalogo.json")
 
 # ONDE o Forge está instalado NA SUA MÁQUINA. Ele é um app gigante À PARTE, fora
 # do repositório do Yato — por isso o caminho é absoluto e mora aqui (não no
@@ -317,6 +320,113 @@ def injetar_trigger(prompt, trigger):
     if re.search(rf"(?<!\w){re.escape(trigger)}(?!\w)", prompt):
         return prompt
     return f"{trigger}, {prompt}" if prompt.strip() else trigger
+
+
+# --- (PARADO) Recomendar a LoRA por estilo — pronto, mas FORA da UI ------------
+# O catálogo (perfil de estilo dos LoRAs via Civitai) e a lógica de casar estão
+# prontos e testados. NÃO estão ligados na interface porque o elo fraco é o OLHO
+# local: o qwen2.5vl chama quase tudo de "digital/anime" e raramente detecta
+# estilo fino (aquarela, pintura) — então a recomendação por IMAGEM ficaria quieta
+# quase sempre (ou daria match confuso). Guardado aqui pra quando existir um modelo
+# de visão local melhor, ou pra virar "você escolhe o estilo → sugiro a LoRA".
+def _perfil_civitai(hexhash):
+    """{nome, tipo, baseModel, tags, desc} de um arquivo, pelo hash: by-hash dá
+    nome/base; /models/{id} dá as TAGS e a descrição (é aí que mora o 'estilo').
+    None se não achar ou der erro."""
+    try:
+        r = requests.get(f"{CIVITAI_API}/model-versions/by-hash/{hexhash}",
+                         timeout=20, headers={"User-Agent": "yato/1.0"})
+        if r.status_code != 200:
+            return None
+        v = r.json()
+    except requests.exceptions.RequestException:
+        return None
+    mod = v.get("model") or {}
+    perfil = {"nome": mod.get("name"), "baseModel": v.get("baseModel"),
+              "tags": [], "desc": ""}
+    mid = v.get("modelId")
+    if mid:
+        try:
+            m = requests.get(f"{CIVITAI_API}/models/{mid}", timeout=20,
+                             headers={"User-Agent": "yato/1.0"}).json()
+            perfil["tags"] = m.get("tags") or []
+            limpo = re.sub("<[^>]+>", " ", m.get("description") or "")
+            perfil["desc"] = " ".join(limpo.split())[:200]
+        except requests.exceptions.RequestException:
+            pass
+    return perfil
+
+
+def _catalogo_loras():
+    """Perfil de estilo (Civitai) de cada LoRA seu, com cache no disco. Cada LoRA é
+    hasheado/consultado UMA vez (arquivos pequenos, ~3s no total). Devolve a lista
+    dos que o Civitai reconheceu, cada um com o campo 'arquivo' (o nome do .safetensors)."""
+    try:
+        cache = json.loads(CACHE_CATALOGO.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    catalogo, mudou = [], False
+    for nome in listar_loras():
+        if nome not in cache:
+            hexhash = _sha256_lora(nome)
+            cache[nome] = _perfil_civitai(hexhash) if hexhash else None
+            mudou = True
+        perfil = cache[nome]
+        if perfil:
+            catalogo.append({**perfil, "arquivo": nome})
+    if mudou:
+        try:
+            CACHE_CATALOGO.write_text(json.dumps(cache, ensure_ascii=False, indent=2),
+                                      encoding="utf-8")
+        except OSError as erro:
+            logging.warning("nao salvou o cache do catalogo: %s", erro)
+    return catalogo
+
+
+_SIS_RECOMENDA_LORA = (
+    "Você recebe o ESTILO de uma imagem e uma lista de LoRAs (arquivo :: tags :: "
+    "descrição). Escolha a ÚNICA LoRA cujo estilo CLARAMENTE combina com a imagem. "
+    "Regra de ouro: se NENHUMA combinar com clareza, responda 'nenhum' — é melhor "
+    "não sugerir do que sugerir errado. Responda em 2 linhas, exatamente:\n"
+    "LORA: <nome do arquivo, ou nenhum>\nPORQUE: <1 frase curta em português>")
+
+
+def recomendar_lora(descricao_estilo):
+    """Dado o ESTILO de uma imagem (texto da visão), sugere a LoRA sua que mais
+    combina — ou None se nada combina COM CLAREZA (só sugere com confiança; é uma
+    dica, não uma regra). Devolve {'arquivo', 'motivo'} ou None. Nunca levanta erro."""
+    if not descricao_estilo:
+        return None
+    try:
+        catalogo = _catalogo_loras()
+    except Exception as erro:                       # rede/JSON/o que for: sem dica
+        logging.warning("recomendar_lora — catalogo falhou: %s", erro)
+        return None
+    if not catalogo:
+        return None
+    linhas = "\n".join(
+        f"- {c['arquivo']} :: {', '.join((c.get('tags') or [])[:6])} :: {(c.get('desc') or '')[:90]}"
+        for c in catalogo)
+    try:
+        resp = _perguntar_cerebro(
+            _SIS_RECOMENDA_LORA, f"ESTILO DA IMAGEM: {descricao_estilo}\n\nLORAS:\n{linhas}",
+            num_predict=120, temperatura=0.2, timeout=90, erro_falha="")
+    except ImagemError:
+        return None
+    achado = re.search(r"LORA:\s*(.+)", resp)
+    if not achado:
+        return None
+    escolha = achado.group(1).strip().strip('".')
+    if not escolha or escolha.lower() in ("nenhum", "nenhuma", "none", "-"):
+        return None                                 # o cérebro não achou match claro
+    arquivo = next((c["arquivo"] for c in catalogo
+                    if c["arquivo"].lower() == escolha.lower()
+                    or escolha.lower() in c["arquivo"].lower()
+                    or c["arquivo"].lower() in escolha.lower()), None)
+    if not arquivo:
+        return None
+    motivo = re.search(r"PORQUE:\s*(.+)", resp)
+    return {"arquivo": arquivo, "motivo": motivo.group(1).strip() if motivo else ""}
 
 
 def listar_modelos():

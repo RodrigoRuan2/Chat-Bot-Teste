@@ -621,8 +621,17 @@ O projeto evolui em **rodadas** — cada uma vira um commit com nome claro.
       abriam um menu nativo do Tk que "vazava" pra fora; agora abrem um cartão
       clampado na janela (mesmo padrão do menu ⋮), que fecha no clique-fora
 
+### 🅿️ Rodada 16 — recomendar a LoRA por estilo (PRONTO, mas PARADO)
+- [x] `imagem.recomendar_lora` + catálogo de estilo dos LoRAs (perfil do Civitai
+      por hash: baseModel, tags, descrição — cache no disco); o cérebro casa o
+      estilo, ou responde **'nenhum'**. Testado e funcionando.
+- [~] **Fora da UI de propósito**: o elo fraco é o OLHO local (chama quase tudo de
+      "digital/anime", não pega estilo fino). A recomendação por IMAGEM ficaria
+      quieta quase sempre — então o código fica **guardado** pra quando houver um
+      olho melhor, ou pra virar "você escolhe o estilo → sugiro a LoRA".
+
 ### 💡 Depois (sem número ainda)
-- [ ] Sugerir o checkpoint/LoRA que combina com a imagem (via descrição do Civitai)
+- [ ] Recomendar LoRA no modo "você escolhe o estilo" (tira o olho do caminho)
 - [ ] Variações mais distintas (hoje o 7B mais reformula que reinventa)
 - [ ] Mais ferramentas (clima, lembretes, ler arquivos...)
 - [ ] Mostrar os **tokens** (como a IA "fatia" o texto em pedaços)
